@@ -1,0 +1,2595 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIハイブリッド自動採点プラットフォーム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- PDF.js for multi-page PDF scan loading -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        /* Print styles for A4 / B4 / A3 crisp output */
+        #batch-print-container {
+            display: none;
+        }
+        @media print {
+            @page {
+                size: A4 portrait;
+                margin: 0mm;
+            }
+            html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            #app-root, #toast-container {
+                display: none !important;
+            }
+            #batch-print-container {
+                display: block !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .batch-print-page {
+                page-break-after: always;
+                break-after: page;
+                width: 100vw;
+                height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-sizing: border-box;
+                padding: 4mm;
+            }
+            .batch-print-page:last-child {
+                page-break-after: auto;
+                break-after: auto;
+            }
+            .batch-print-page img {
+                max-width: 100%;
+                max-height: 100%;
+                width: auto;
+                height: auto;
+                object-fit: contain;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- 印刷専用コンテナ（通常時は非表示、印刷時のみA4フルサイズで表示） -->
+    <div id="batch-print-container"></div>
+
+    <!-- トースト通知エリア -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-md pointer-events-none"></div>
+
+    <!-- メインアプリコンテナ -->
+    <div id="app-root" class="flex-1 flex flex-col">
+        <!-- 上部ヘッダー＆保存・読込・API設定バー -->
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+            <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+                <!-- ロゴ・タイトル -->
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                        AI
+                    </div>
+                    <div>
+                        <h1 class="text-sm sm:text-base font-bold text-slate-800 leading-tight">次世代AIハイブリッド自動採点プラットフォーム</h1>
+                        <p class="text-[11px] text-slate-500">1段ワイド解答用紙設計・45人超一括PDF読込・AI赤ペン添削・Excel出力</p>
+                    </div>
+                </div>
+
+                <!-- 途中保存・復元・ファイル出力ツールバー -->
+                <div class="flex flex-wrap items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                    <input id="project-name-input" type="text" placeholder="保存名（例：高2英語_単元テスト）"
+                        class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-44 sm:w-52">
+
+                    <button id="btn-save-cloud" type="button"
+                        class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition flex items-center gap-1">
+                        <span>☁️ 途中経過を保存</span>
+                    </button>
+
+                    <div class="flex items-center gap-1 border-l border-slate-300 pl-2">
+                        <select id="saved-projects-select"
+                            class="text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 max-w-[210px] focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">-- 保存済みデータ (0件) --</option>
+                        </select>
+                        <button id="btn-load-cloud" type="button"
+                            class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition">
+                            読込
+                        </button>
+                        <button id="btn-delete-cloud" type="button" title="選択した保存データを削除"
+                            class="text-xs px-2 py-1.5 rounded-lg bg-slate-200 hover:bg-red-100 hover:text-red-700 text-slate-600 transition">
+                            🗑️
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-1.5 border-l border-slate-300 pl-2">
+                        <button id="btn-export-json" type="button" title="スキャン答案画像も含めてPCにJSON保存"
+                            class="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition">
+                            📥 ファイル保存(.json)
+                        </button>
+                        <label class="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition cursor-pointer">
+                            📤 ファイル読込
+                            <input id="import-json-input" type="file" accept=".json" class="hidden">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Gemini APIキー設定 -->
+                <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                    <span class="text-[11px] font-semibold text-slate-600">🔑 Gemini API:</span>
+                    <input id="api-key-input" type="password" placeholder="APIキー(未入力時はデモ採点)"
+                        class="text-xs px-2 py-1 rounded-lg border border-slate-300 bg-white w-36 sm:w-44 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+        </header>
+
+        <!-- メイン2カラム領域 -->
+        <main class="flex-1 max-w-[1600px] w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+
+            <!-- 左カラム：STEP 1〜3 操作パネル (5/12) -->
+            <div class="lg:col-span-5 flex flex-col gap-4">
+
+                <!-- STEP 1: 問題・採点基準から解答用紙を作成 -->
+                <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">1</span>
+                            <h2 class="text-sm font-bold text-slate-800">問題・採点基準から解答用紙を作成</h2>
+                        </div>
+                        <span id="step1-summary-badge" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                            0枠 (計0点)
+                        </span>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-1.5">
+                        <p class="text-xs text-slate-500">問題文と解答・配点表のテキストを貼り付けてください。形式は自由です。</p>
+                        <button id="btn-clear-input" type="button"
+                            class="text-[11px] font-medium px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 transition">
+                            入力クリア
+                        </button>
+                    </div>
+
+                    <textarea id="test-input" rows="7"
+                        placeholder="ここにテスト問題や模範解答・配点表を貼り付けて「✨ 貼り付けたテキストから解答用紙を自動設計」を押してください。&#10;&#10;例：&#10;【大問1】適語補充（2点×4＝8点）&#10;① which  ② bus  ③ spoken  ④ looking&#10;【大問2】和訳・英作文（4点×2＝8点）&#10;1. He pretended not to know the truth.&#10;2. 私は彼にどこへ行くべきか尋ねた。"
+                        class="w-full text-xs p-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono leading-relaxed"></textarea>
+
+                    <!-- レイアウト・枠間隔設定 -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-3 p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">📐 用紙レイアウト</label>
+                            <select id="layout-mode-select" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white">
+                                <option value="single-grid" selected>1段ワイド（各大問を全幅で横並び・推奨）</option>
+                                <option value="single-full">1段フル幅（記述を1行1問で広く配置）</option>
+                                <option value="two-column">2段組（左右2列に分割）</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">📏 枠の高さと間隔</label>
+                            <select id="box-spacing-select" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white">
+                                <option value="auto-stretch" selected>用紙に合わせて自動拡大（推奨）</option>
+                                <option value="comfortable">ゆったり（枠の高さ広め）</option>
+                                <option value="standard">標準サイズ</option>
+                                <option value="compact">コンパクト（50問以上の時）</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 自動設計ボタン群 -->
+                    <div class="flex flex-wrap gap-2 mt-3">
+                        <button id="btn-parse-local" type="button"
+                            class="flex-1 text-xs font-bold py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition flex items-center justify-center gap-1.5">
+                            <span>✨ 貼り付けたテキストから解答用紙を自動設計</span>
+                        </button>
+                        <button id="btn-parse-ai" type="button" title="Gemini APIを使って複雑な問題文から解答枠を解析します"
+                            class="text-xs font-semibold py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition">
+                            🤖 AI解析
+                        </button>
+                    </div>
+
+                    <!-- 抽出された解答枠・配点の微調整パネル -->
+                    <div class="mt-3 border border-slate-200 rounded-xl overflow-hidden">
+                        <button id="btn-toggle-editor" type="button"
+                            class="w-full px-3 py-2 bg-slate-100 hover:bg-slate-200/70 text-left text-xs font-semibold text-slate-700 flex items-center justify-between transition">
+                            <span>🛠️ 抽出された解答枠・配点の確認と微調整</span>
+                            <span id="editor-toggle-icon" class="text-[11px] text-slate-500">▼ 開く</span>
+                        </button>
+                        <div id="question-editor-panel" class="hidden p-3 bg-white border-t border-slate-200 max-h-80 overflow-y-auto space-y-3">
+                            <p class="text-[11px] text-slate-400 text-center py-2">先にテキストから解答用紙を自動設計してください。</p>
+                        </div>
+                    </div>
+
+                    <!-- 白紙印刷ボタン -->
+                    <div class="mt-3 pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
+                        <span class="text-[11px] text-slate-500">※A4/B4/A3および輪転機印刷に対応（四隅■マーカー自動補正）</span>
+                        <button id="btn-print-sheet" type="button"
+                            class="text-xs font-bold px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white shadow-sm transition flex items-center gap-1.5 shrink-0">
+                            <span>🖨️ 白紙の解答用紙を印刷</span>
+                        </button>
+                    </div>
+                </section>
+
+                <!-- STEP 2: 記入済みスキャン答案の読み込み（45人・50人以上の一括対応） -->
+                <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">2</span>
+                            <h2 class="text-sm font-bold text-slate-800">記入済み答案の一括読み込み（45名以上・PDF対応）</h2>
+                        </div>
+                        <span id="scan-status-badge" class="text-[11px] font-medium text-slate-400">未読み込み</span>
+                    </div>
+
+                    <p class="text-xs text-slate-500 mb-2.5">
+                        複合機でクラス全員分を連続スキャンした<strong>複数ページPDF</strong>、または<strong>複数枚のJPEG/PNG画像</strong>をまとめて選択・ドロップしてください。
+                    </p>
+
+                    <label id="scan-dropzone"
+                        class="flex flex-col items-center justify-center border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/40 hover:bg-blue-50/80 rounded-xl p-4 cursor-pointer transition text-center">
+                        <span class="text-2xl mb-1">📄</span>
+                        <span class="text-xs font-bold text-blue-700">クリックして答案ファイル（PDF / JPEG / PNG）をまとめて選択</span>
+                        <span class="text-[11px] text-slate-500 mt-0.5">※45人・50人以上の複数ファイル選択やドラッグ＆ドロップに対応</span>
+                        <input id="scan-file-input" type="file" accept="image/*,.pdf,application/pdf" multiple class="hidden">
+                    </label>
+
+                    <!-- バッチ答案切り替えナビゲーションバー -->
+                    <div id="batch-nav-bar" class="hidden mt-3 p-2.5 bg-slate-100 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
+                        <button id="btn-batch-prev" type="button"
+                            class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 transition">
+                            ◀ 前の答案
+                        </button>
+                        <div class="text-center flex-1 min-w-0">
+                            <div id="batch-page-indicator" class="text-xs font-bold text-slate-800 truncate">1 / 1 枚目</div>
+                            <div id="batch-file-label" class="text-[10px] text-slate-500 truncate">sample.pdf</div>
+                        </div>
+                        <button id="btn-batch-next" type="button"
+                            class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 transition">
+                            次の答案 ▶
+                        </button>
+                        <button id="btn-batch-clear" type="button" title="読み込んだ答案をすべてクリア"
+                            class="text-xs px-2 py-1.5 rounded-lg bg-white hover:bg-red-50 text-slate-500 hover:text-red-600 border border-slate-300 transition">
+                            🗑️
+                        </button>
+                    </div>
+
+                    <!-- スキャナーが無い時のテスト用デモ答案生成ボタン -->
+                    <div class="mt-2.5 flex items-center justify-between">
+                        <span class="text-[11px] text-slate-400">スキャナーが手元にない場合のテスト用：</span>
+                        <button id="btn-demo-handwriting" type="button"
+                            class="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition">
+                            ✍️ サンプル手書き答案を自動生成して試す
+                        </button>
+                    </div>
+                </section>
+
+                <!-- STEP 3: AI自動採点・赤ペン添削・Excel出力 -->
+                <section class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">3</span>
+                            <h2 class="text-sm font-bold text-slate-800">AI自動採点・赤ペン添削・Excel出力</h2>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-xs text-slate-500">合計得点:</span>
+                            <span id="total-score-val" class="text-lg font-extrabold text-red-600 ml-1">--</span>
+                            <span class="text-xs text-slate-500">/ <span id="max-score-val">100</span>点</span>
+                        </div>
+                    </div>
+
+                    <!-- 採点オプション -->
+                    <div class="space-y-1.5 mb-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                        <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input id="chk-ocr-student" type="checkbox" checked class="rounded text-blue-600 focus:ring-blue-500">
+                            <span>👤 答案上部の<strong>「年・組・番・氏名」</strong>もAIで自動読み取りする</span>
+                        </label>
+                        <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input id="chk-skip-graded" type="checkbox" checked class="rounded text-blue-600 focus:ring-blue-500">
+                            <span>⏭️ 一括採点時は<strong>「未採点」の答案のみ</strong>実行する（途中再開に便利）</span>
+                        </label>
+                    </div>
+
+                    <!-- 採点実行ボタン -->
+                    <div class="flex flex-col gap-2">
+                        <button id="btn-grade-batch" type="button"
+                            class="hidden w-full py-3 px-4 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-2">
+                            <span>🚀 読み込んだ全答案を一括AI自動採点</span>
+                        </button>
+                        <button id="btn-grade-single" type="button"
+                            class="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-1.5">
+                            <span>✨ 現在表示中の答案をAI自動採点</span>
+                        </button>
+                    </div>
+
+                    <!-- 進捗バー -->
+                    <div id="grade-progress-box" class="hidden mt-3 p-2.5 bg-blue-50 rounded-xl border border-blue-200">
+                        <div class="flex items-center justify-between text-xs font-semibold text-blue-800 mb-1">
+                            <span id="grade-progress-text">採点準備中...</span>
+                            <span id="grade-progress-percent">0%</span>
+                        </div>
+                        <div class="w-full h-2 bg-blue-200 rounded-full overflow-hidden">
+                            <div id="grade-progress-bar" class="h-full bg-blue-600 transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- AIに送信された切り出し合成シート確認アコーディオン -->
+                    <details class="mt-3 text-xs border border-slate-200 rounded-xl bg-slate-50 px-3 py-2">
+                        <summary class="font-semibold text-slate-600 cursor-pointer select-none">
+                            🔍 AIに送信された「解答欄クロップ合成シート」を確認
+                        </summary>
+                        <div class="mt-2 pt-2 border-t border-slate-200">
+                            <p class="text-[11px] text-slate-500 mb-1.5">枠線の内側3pxを切り抜き、縦1列に整列させてAIに渡した画像です。</p>
+                            <img id="crop-preview-img" alt="クロッププレビュー" class="max-h-60 w-auto mx-auto border border-slate-300 rounded bg-white hidden">
+                        </div>
+                    </details>
+
+                    <!-- 設問別採点結果＆手動得点調整リスト -->
+                    <div id="results-list" class="mt-3 max-h-72 overflow-y-auto space-y-2 pr-1">
+                        <p class="text-xs text-slate-400 text-center py-4">
+                            スキャン画像を読み込んで採点ボタンを押すと、ここに各問の判定と添削コメントが表示されます。
+                        </p>
+                    </div>
+
+                    <!-- 生徒情報（年・組・番・氏名）＆成績リスト記録 -->
+                    <div class="mt-4 pt-3 border-t border-slate-200">
+                        <div class="flex items-center justify-between mb-2">
+                            <h3 class="text-xs font-bold text-slate-700">📋 生徒情報・クラス成績リスト</h3>
+                            <span id="roster-count-badge" class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                                記録数: 0名
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-12 gap-1.5 mb-2">
+                            <input id="stu-grade" type="text" placeholder="年" class="col-span-2 text-xs px-2 py-1.5 rounded-lg border border-slate-300">
+                            <input id="stu-class" type="text" placeholder="組" class="col-span-2 text-xs px-2 py-1.5 rounded-lg border border-slate-300">
+                            <input id="stu-number" type="text" placeholder="番" class="col-span-2 text-xs px-2 py-1.5 rounded-lg border border-slate-300">
+                            <input id="stu-name" type="text" placeholder="氏名" class="col-span-6 text-xs px-2.5 py-1.5 rounded-lg border border-slate-300">
+                        </div>
+
+                        <button id="btn-record-student" type="button"
+                            class="w-full text-xs font-semibold py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 transition mb-2.5">
+                            ➕ この生徒の点数を成績リストに記録・更新
+                        </button>
+
+                        <!-- 記録済み生徒ミニ一覧 -->
+                        <div id="roster-preview-box" class="hidden mb-3 max-h-36 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50 p-2 text-[11px]">
+                            <div id="roster-preview-list" class="space-y-1"></div>
+                        </div>
+
+                        <!-- 採点済み印刷＆Excel出力ボタン群 -->
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button id="btn-print-graded" type="button"
+                                class="text-xs font-bold py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white shadow-sm transition flex items-center justify-center gap-1">
+                                <span>🖨️ 採点済み答案を印刷</span>
+                            </button>
+                            <button id="btn-export-csv" type="button"
+                                class="text-xs font-bold py-2.5 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white shadow-sm transition flex items-center justify-center gap-1">
+                                <span>📊 Excel(CSV)に点数を出力</span>
+                            </button>
+                        </div>
+
+                        <button id="btn-print-all-graded" type="button"
+                            class="hidden w-full mt-2 text-xs font-bold py-2.5 px-3 rounded-xl bg-rose-800 hover:bg-rose-900 text-white shadow-sm transition flex items-center justify-center gap-1.5">
+                            <span>🖨️ 全員分の採点済み答案をまとめて一括印刷</span>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 右カラム：A4解答用紙・赤ペン添削リアルタイムプレビュー (7/12) -->
+            <div class="lg:col-span-7 flex flex-col bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sticky top-16">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-100">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                            <span>📄 A4解答用紙・赤ペン添削プレビュー</span>
+                            <span class="text-[11px] font-normal text-slate-500">（A4 / B4 / A3・輪転機対応）</span>
+                        </h2>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-print-sheet-top" type="button"
+                            class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white transition">
+                            🖨️ 白紙の解答用紙を印刷
+                        </button>
+                        <button id="btn-print-graded-top" type="button"
+                            class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white transition">
+                            🖨️ 採点済み答案を印刷
+                        </button>
+                    </div>
+                </div>
+
+                <!-- キャンバスラッパー -->
+                <div class="w-full bg-slate-200/70 rounded-xl p-3 sm:p-5 flex justify-center items-start overflow-auto">
+                    <canvas id="sheet-canvas" width="890" height="1260"
+                        class="bg-white shadow-lg rounded-sm max-w-full h-auto border border-slate-300"></canvas>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <script>
+        // ==========================================
+        // グローバル状態変数
+        // ==========================================
+        const canvas = document.getElementById('sheet-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let currentSheetTitle = "解答用紙";
+        let currentLayoutMode = "single-grid"; // 'single-grid' | 'single-full' | 'two-column'
+        let currentSpacingMode = "auto-stretch"; // 'auto-stretch' | 'comfortable' | 'standard' | 'compact'
+        let currentSections = []; // [{ title, questions: [{ qNum, type, answer, points, rubric }] }]
+        let layoutData = [];      // 描画された各枠の座標 [{ qNum, type, answer, points, rubric, rect: {x,y,w,h}, sectionTitle }]
+
+        let cleanSheetImageData = null;   // 白紙状態のImageData
+        let cleanSheetDataUrl = null;     // 白紙状態のPNG DataURL（いつでも確実に白紙印刷するため保持）
+        let scannedSheetImageData = null; // 現在表示中のスキャン答案（赤ペン描画前）のImageData
+        let lastGradingResults = null;    // 現在表示中の採点結果配列
+
+        // 複数枚一括読み込み（45人・50人以上対応）のバッチ管理
+        let batchSheets = []; // [{ label, rawImg, rawDataUrl, gradedDataUrl, gradingResults, studentInfo, totalScore }]
+        let currentBatchIdx = -1;
+
+        // クラス成績一覧リスト
+        let recordedStudents = []; // [{ grade, classNum, number, name, totalScore, maxScore, qScores: {} }]
+
+        // APIキーのローカル保存復元
+        const savedApiKey = localStorage.getItem('gemini_grader_api_key') || '';
+        if (savedApiKey) {
+            document.getElementById('api-key-input').value = savedApiKey;
+        }
+        document.getElementById('api-key-input').addEventListener('change', (e) => {
+            localStorage.setItem('gemini_grader_api_key', e.target.value.trim());
+        });
+
+        // トーストメッセージ表示関数（alertの代替）
+        function showMessage(text, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const colorMap = {
+                success: 'bg-emerald-600 text-white border-emerald-700',
+                error: 'bg-rose-600 text-white border-rose-700',
+                info: 'bg-slate-800 text-white border-slate-900'
+            };
+            toast.className = `pointer-events-auto px-4 py-3 rounded-xl shadow-lg border text-xs font-medium transition-all duration-300 ${colorMap[type] || colorMap.info}`;
+            toast.textContent = text;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 4500);
+        }
+
+        // ==========================================
+        // STEP 1: 高精度スマート構文解析エンジン（0.1秒でテキストから解答枠と配点を抽出）
+        // ==========================================
+        function classifyBoxType(answerStr, points = 2, explicitHint = '') {
+            const clean = String(answerStr || '').trim();
+            if (explicitHint === 'symbol') return 'symbol';
+            if (explicitHint === 'word') return 'word';
+            if (explicitHint === 'phrase') return 'phrase';
+            if (explicitHint === 'sentence') return 'sentence';
+            if (explicitHint === 'long') return 'long';
+
+            if (!clean) return 'word';
+            if (/^[A-Za-zア-ンｱ-ﾝ1-9１-９①-⑩]$/.test(clean)) return 'symbol';
+
+            const hasJapanese = /[ぁ-んァ-ヶ一-龠]/.test(clean);
+            if (hasJapanese) {
+                if (clean.length <= 4) return 'word';
+                if (clean.length <= 12) return 'phrase';
+                if (clean.length <= 42) return 'sentence';
+                return 'long';
+            }
+
+            const words = clean.split(/\s+/).filter(Boolean);
+            if (words.length <= 1 && clean.length <= 15) return 'word';
+            if (words.length <= 4 && clean.length <= 30) return 'phrase';
+            if (words.length <= 16 && points < 6) return 'sentence';
+            return 'long';
+        }
+
+        function parseTestTextLocally(rawText) {
+            const text = String(rawText || '').replace(/\r\n/g, '\n');
+            const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+            if (lines.length === 0) return { title: '解答用紙', sections: [] };
+
+            // タイトル推定
+            let sheetTitle = '英語 解答用紙';
+            for (let i = 0; i < Math.min(5, lines.length); i++) {
+                const l = lines[i].replace(/^[#■◆●【\s]+|[】\s]+$/g, '');
+                if (l && !/^(第[12]部|問題|解答|【大問|大問)/.test(l) && l.length <= 48) {
+                    sheetTitle = l;
+                    break;
+                }
+            }
+
+            // 「解答・配点」パートが後半にある場合はそこから下を優先解析
+            let startIdx = 0;
+            for (let i = 0; i < lines.length; i++) {
+                if (/^(第2部|【?解答・?配点|【?模範解答|解答と配点|===+\s*解答)/.test(lines[i])) {
+                    startIdx = i + 1;
+                }
+            }
+
+            const targetLines = lines.slice(startIdx);
+            const sections = [];
+            let currentSec = null;
+            let defaultPoints = 2;
+
+            function ensureSection(title = '大問1') {
+                if (!currentSec) {
+                    currentSec = { title, questions: [] };
+                    sections.push(currentSec);
+                }
+                return currentSec;
+            }
+
+            const circledNums = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+
+            for (let i = 0; i < targetLines.length; i++) {
+                const line = targetLines[i];
+
+                // 全訳・解説ブロックの開始行以降はスキップ
+                if (/^【?(長文の全訳|全訳|スクリプト|リスニング原稿)】?/.test(line)) {
+                    break;
+                }
+
+                // 大問見出しの検出
+                if (/^(【?大問\s*[0-9０-９一二三四五六七八九十ⅠⅡⅢⅣⅤ]+|第\s*[0-9０-９一二三四五六七八九十]+\s*問|\[大問|[ⅠⅡⅢⅣⅤⅥⅦⅧ][\s．.、])/.test(line)) {
+                    const cleanSecTitle = line
+                        .replace(/^[【\[]|[】\]]$/g, '')
+                        .replace(/（.*?点.*?）|\(.*?点.*?\)/g, '')
+                        .trim();
+                    currentSec = { title: cleanSecTitle || `大問${sections.length + 1}`, questions: [] };
+                    sections.push(currentSec);
+
+                    // 配点ヒントの抽出 (例: 2点×8, 各1.5点)
+                    const ptMatch = line.match(/([0-9]+(?:\.[0-9]+)?)\s*点\s*[×xX*]|各(?:問)?\s*([0-9]+(?:\.[0-9]+)?)\s*点/);
+                    if (ptMatch) {
+                        defaultPoints = parseFloat(ptMatch[1] || ptMatch[2]) || 2;
+                    }
+                    continue;
+                }
+
+                // 行単独の配点指定 (例: "配点：各1点")
+                const standalonePt = line.match(/^(?:配点)?[:：]?\s*各(?:問)?\s*([0-9]+(?:\.[0-9]+)?)\s*点/);
+                if (standalonePt) {
+                    defaultPoints = parseFloat(standalonePt[1]) || defaultPoints;
+                    continue;
+                }
+
+                // パターンA: 1行に丸数字（①〜⑳）が複数並んでいる場合
+                const circleMatches = [...line.matchAll(/([①-⑳])\s*([^\s①-⑳]+(?:\s+[^\s①-⑳]+)*?)(?=\s*[①-⑳]|$)/g)];
+                if (circleMatches.length >= 2) {
+                    const sec = ensureSection();
+                    for (const m of circleMatches) {
+                        const qNum = m[1];
+                        let ans = m[2].replace(/[、,。]/g, '').trim();
+                        let pts = defaultPoints;
+                        const inlinePt = ans.match(/[（(]([0-9]+(?:\.[0-9]+)?)\s*点[）)]/);
+                        if (inlinePt) {
+                            pts = parseFloat(inlinePt[1]);
+                            ans = ans.replace(inlinePt[0], '').trim();
+                        }
+                        sec.questions.push({
+                            qNum,
+                            type: classifyBoxType(ans, pts),
+                            answer: ans,
+                            points: pts,
+                            rubric: '完全一致（スペルミスは減点または不正解）'
+                        });
+                    }
+                    continue;
+                }
+
+                // パターンB: 誤文訂正セット（記号：[ c ] 訂正：[ how to play ]）
+                const corrMatch = line.match(/^(?:[\(（]?([0-9０-９①-⑳]+|[問][0-9０-９]+)[\)）.\s、]+)?.*?記号\s*[:：]\s*[\[［(（]?\s*([A-Za-zア-ン])\s*[\]］)）]?.*?訂正\s*[:：]\s*[\[［(（]?\s*([^\]］)）]+)\s*[\]］)）]?/);
+                if (corrMatch) {
+                    const sec = ensureSection();
+                    const baseNum = corrMatch[1] || String(Math.floor(sec.questions.length / 2) + 1);
+                    const symAns = corrMatch[2].trim();
+                    let fixAns = corrMatch[3].trim();
+                    let rubricText = '';
+                    if (fixAns.includes('解説：') || fixAns.includes('解説:')) {
+                        const parts = fixAns.split(/解説[:：]/);
+                        fixAns = parts[0].trim();
+                        rubricText = parts[1].trim();
+                    }
+                    sec.questions.push({
+                        qNum: `${baseNum}記号`,
+                        type: 'symbol',
+                        answer: symAns,
+                        points: 1,
+                        rubric: '記号完全一致'
+                    });
+                    sec.questions.push({
+                        qNum: `${baseNum}訂正`,
+                        type: classifyBoxType(fixAns, 2, 'phrase'),
+                        answer: fixAns,
+                        points: 2,
+                        rubric: rubricText || '文法・語法が正しいこと'
+                    });
+                    continue;
+                }
+
+                // パターンC: 一般的な問題番号付きの行 (例: "1. He pretended..." / "① which (2点)" / "問1 ア (3点)")
+                const stdMatch = line.match(/^(?:[\(（]([0-9０-９]{1,2}|[①-⑳])[\)）]|([①-⑳])|(問\s*[0-9０-９]+(?:\s*[①-⑩(（][0-9①-⑩]+[)）])?)|([0-9]{1,2}(?:-[0-9]{1,2})?)[.．、)\s])\s*(.+)$/);
+                if (stdMatch) {
+                    const sec = ensureSection();
+                    const rawNum = (stdMatch[1] || stdMatch[2] || stdMatch[3] || stdMatch[4]).replace(/\s+/g, '');
+                    let rest = stdMatch[5].trim();
+
+                    // 解説・採点基準の切り離し
+                    let rubric = '';
+                    const expSplit = rest.split(/\s*(?:解説|採点基準|※)[:：]\s*/);
+                    if (expSplit.length > 1) {
+                        rest = expSplit[0].trim();
+                        rubric = expSplit.slice(1).join(' / ').trim();
+                    }
+
+                    // 配点の抽出
+                    let pts = defaultPoints;
+                    const ptInLine = rest.match(/[（(［\[]\s*(?:各\s*)?([0-9]+(?:\.[0-9]+)?)\s*点(?:\s*[×xX*]\s*([0-9]+))?\s*[）)］\]]/);
+                    if (ptInLine) {
+                        pts = parseFloat(ptInLine[1]) || defaultPoints;
+                        rest = rest.replace(ptInLine[0], '').trim();
+                    }
+
+                    // カッコ区切り単語の展開: ( comfortable ) ( to ) ( sit ) ( on )
+                    const parenTokens = [...rest.matchAll(/[（(]\s*([^)）]+?)\s*[)）]/g)];
+                    if (parenTokens.length >= 2 && sec.title.includes('書き換え')) {
+                        parenTokens.forEach((tk, idx) => {
+                            const tokenAns = tk[1].trim();
+                            sec.questions.push({
+                                qNum: `${rawNum}-${idx + 1}`,
+                                type: 'word',
+                                answer: tokenAns,
+                                points: pts,
+                                rubric: rubric || '単語完全一致'
+                            });
+                        });
+                        continue;
+                    }
+
+                    // 整序問題などで ( to / be / kind ) などを綺麗にする
+                    let cleanAns = rest
+                        .replace(/^[\[［【「『]|[\]］】」』]$/g, '')
+                        .replace(/^\(\s*|\s*\)$/g, '')
+                        .trim();
+
+                    if (!cleanAns) continue;
+
+                    sec.questions.push({
+                        qNum: rawNum,
+                        type: classifyBoxType(cleanAns, pts),
+                        answer: cleanAns,
+                        points: pts,
+                        rubric: rubric || '意味・文法が正しければ正解（部分点考慮）'
+                    });
+                }
+            }
+
+            // もし1問も抽出できなかった場合、行ごとに1問としてフォールバック抽出
+            if (sections.length === 0 || sections.every(s => s.questions.length === 0)) {
+                const fallbackSec = { title: '大問1', questions: [] };
+                lines.forEach((l, idx) => {
+                    if (l.length > 0 && idx < 40) {
+                        fallbackSec.questions.push({
+                            qNum: `(${idx + 1})`,
+                            type: classifyBoxType(l, 2),
+                            answer: l,
+                            points: 2,
+                            rubric: '模範解答に基づき採点'
+                        });
+                    }
+                });
+                if (fallbackSec.questions.length > 0) sections.push(fallbackSec);
+            }
+
+            return { title: sheetTitle, sections: sections.filter(s => s.questions.length > 0) };
+        }
+
+        // ==========================================
+        // 抽出された解答枠・配点の確認と微調整パネル描画
+        // ==========================================
+        function updateStep1Badge() {
+            let totalBoxes = 0;
+            let totalPts = 0;
+            currentSections.forEach(sec => {
+                sec.questions.forEach(q => {
+                    totalBoxes++;
+                    totalPts += Number(q.points) || 0;
+                });
+            });
+            const formattedPts = Number.isInteger(totalPts) ? totalPts : totalPts.toFixed(1);
+            document.getElementById('step1-summary-badge').textContent = `${totalBoxes}枠 (計${formattedPts}点)`;
+            document.getElementById('max-score-val').textContent = formattedPts;
+        }
+
+        function renderQuestionEditor() {
+            const panel = document.getElementById('question-editor-panel');
+            updateStep1Badge();
+
+            if (!currentSections || currentSections.length === 0) {
+                panel.innerHTML = '<p class="text-[11px] text-slate-400 text-center py-2">先にテキストから解答用紙を自動設計してください。</p>';
+                return;
+            }
+
+            panel.innerHTML = '';
+            currentSections.forEach((sec, sIdx) => {
+                const secDiv = document.createElement('div');
+                secDiv.className = 'border border-slate-200 rounded-lg p-2 bg-slate-50';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'flex items-center justify-between gap-2 mb-2';
+                headerDiv.innerHTML = `
+                    <input type="text" value="${sec.title.replace(/"/g, '&quot;')}" data-sidx="${sIdx}"
+                        class="sec-title-input text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded px-2 py-1 flex-1">
+                    <button type="button" data-sidx="${sIdx}" class="btn-add-q text-[11px] font-semibold px-2 py-1 rounded bg-blue-100 hover:bg-blue-200 text-blue-700">
+                        ＋ 枠を追加
+                    </button>
+                `;
+                secDiv.appendChild(headerDiv);
+
+                const qListDiv = document.createElement('div');
+                qListDiv.className = 'space-y-1.5';
+
+                sec.questions.forEach((q, qIdx) => {
+                    const row = document.createElement('div');
+                    row.className = 'grid grid-cols-12 gap-1 items-center bg-white p-1.5 rounded border border-slate-200 text-[11px]';
+                    row.innerHTML = `
+                        <input type="text" value="${String(q.qNum).replace(/"/g, '&quot;')}" data-sidx="${sIdx}" data-qidx="${qIdx}" data-field="qNum"
+                            class="q-edit-input col-span-2 px-1.5 py-1 border border-slate-300 rounded font-semibold text-center" title="問題番号">
+                        <select data-sidx="${sIdx}" data-qidx="${qIdx}" data-field="type"
+                            class="q-edit-input col-span-3 px-1 py-1 border border-slate-300 rounded bg-white" title="枠のサイズ">
+                            <option value="symbol" ${q.type === 'symbol' ? 'selected' : ''}>記号(小)</option>
+                            <option value="word" ${q.type === 'word' ? 'selected' : ''}>単語(中)</option>
+                            <option value="phrase" ${q.type === 'phrase' ? 'selected' : ''}>熟語(広)</option>
+                            <option value="sentence" ${q.type === 'sentence' ? 'selected' : ''}>1文(1行)</option>
+                            <option value="long" ${q.type === 'long' ? 'selected' : ''}>長文(複数行)</option>
+                        </select>
+                        <input type="text" value="${String(q.answer || '').replace(/"/g, '&quot;')}" data-sidx="${sIdx}" data-qidx="${qIdx}" data-field="answer"
+                            placeholder="模範解答" class="q-edit-input col-span-4 px-1.5 py-1 border border-slate-300 rounded" title="模範解答">
+                        <input type="number" step="0.5" min="0" value="${q.points}" data-sidx="${sIdx}" data-qidx="${qIdx}" data-field="points"
+                            class="q-edit-input col-span-2 px-1 py-1 border border-slate-300 rounded text-right" title="配点">
+                        <button type="button" data-sidx="${sIdx}" data-qidx="${qIdx}"
+                            class="btn-del-q col-span-1 text-slate-400 hover:text-red-600 text-center font-bold" title="この枠を削除">✕</button>
+                    `;
+                    qListDiv.appendChild(row);
+                });
+
+                secDiv.appendChild(qListDiv);
+                panel.appendChild(secDiv);
+            });
+
+            // イベントバインド
+            panel.querySelectorAll('.sec-title-input').forEach(inp => {
+                inp.addEventListener('change', (e) => {
+                    const sIdx = Number(e.target.dataset.sidx);
+                    currentSections[sIdx].title = e.target.value;
+                    renderAnswerSheet(currentSections, currentSheetTitle);
+                });
+            });
+
+            panel.querySelectorAll('.q-edit-input').forEach(inp => {
+                inp.addEventListener('change', (e) => {
+                    const sIdx = Number(e.target.dataset.sidx);
+                    const qIdx = Number(e.target.dataset.qidx);
+                    const field = e.target.dataset.field;
+                    if (field === 'points') {
+                        currentSections[sIdx].questions[qIdx].points = parseFloat(e.target.value) || 0;
+                    } else {
+                        currentSections[sIdx].questions[qIdx][field] = e.target.value;
+                    }
+                    updateStep1Badge();
+                    renderAnswerSheet(currentSections, currentSheetTitle);
+                });
+            });
+
+            panel.querySelectorAll('.btn-add-q').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const sIdx = Number(e.currentTarget.dataset.sidx);
+                    const nextNum = currentSections[sIdx].questions.length + 1;
+                    currentSections[sIdx].questions.push({
+                        qNum: `(${nextNum})`,
+                        type: 'word',
+                        answer: '',
+                        points: 2,
+                        rubric: ''
+                    });
+                    renderQuestionEditor();
+                    renderAnswerSheet(currentSections, currentSheetTitle);
+                });
+            });
+
+            panel.querySelectorAll('.btn-del-q').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const sIdx = Number(e.currentTarget.dataset.sidx);
+                    const qIdx = Number(e.currentTarget.dataset.qidx);
+                    currentSections[sIdx].questions.splice(qIdx, 1);
+                    renderQuestionEditor();
+                    renderAnswerSheet(currentSections, currentSheetTitle);
+                });
+            });
+        }
+
+        // 微調整パネルの開閉トグル
+        document.getElementById('btn-toggle-editor').addEventListener('click', () => {
+            const panel = document.getElementById('question-editor-panel');
+            const icon = document.getElementById('editor-toggle-icon');
+            const isHidden = panel.classList.contains('hidden');
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                icon.textContent = '▲ 閉じる';
+            } else {
+                panel.classList.add('hidden');
+                icon.textContent = '▼ 開く';
+            }
+        });
+
+        // ==========================================
+        // A4解答用紙キャンバス描画エンジン（1段ワイド・拡大氏名欄・四隅マーカー付）
+        // ==========================================
+        function getRowItemsForSection(questions, mode) {
+            const rows = [];
+            let currentRow = [];
+            let currentSpan = 0;
+            const maxSpan = mode === 'single-full' ? 6 : 12; // 12カラムグリッド方式
+
+            function spanForType(type) {
+                if (mode === 'single-full') {
+                    if (type === 'symbol') return 2;
+                    if (type === 'word') return 3;
+                    return 6;
+                }
+                if (type === 'symbol') return 3;   // 1行に最大4枠
+                if (type === 'word') return 3;     // 1行に最大4枠
+                if (type === 'phrase') return 6;   // 1行に2枠
+                if (type === 'sentence') return 6; // 1行に2枠（ワイド）
+                return 12;                         // 長文は1行全幅
+            }
+
+            for (let i = 0; i < questions.length; i++) {
+                const q = questions[i];
+                const nextQ = questions[i + 1];
+
+                // 「1記号」と「1訂正」のペアは分断されないようにセットで6カラム（半幅）扱いにする
+                if (/記号$/.test(q.qNum) && nextQ && /訂正$/.test(nextQ.qNum)) {
+                    const pairSpan = 6;
+                    if (currentSpan + pairSpan > maxSpan && currentRow.length > 0) {
+                        rows.push(currentRow);
+                        currentRow = [];
+                        currentSpan = 0;
+                    }
+                    currentRow.push({ q, span: 2 });
+                    currentRow.push({ q: nextQ, span: 4 });
+                    currentSpan += pairSpan;
+                    i++;
+                    if (currentSpan >= maxSpan) {
+                        rows.push(currentRow);
+                        currentRow = [];
+                        currentSpan = 0;
+                    }
+                    continue;
+                }
+
+                const sp = spanForType(q.type);
+                if (currentSpan + sp > maxSpan && currentRow.length > 0) {
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentSpan = 0;
+                }
+                currentRow.push({ q, span: sp });
+                currentSpan += sp;
+                if (currentSpan >= maxSpan) {
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentSpan = 0;
+                }
+            }
+            if (currentRow.length > 0) rows.push(currentRow);
+            return rows;
+        }
+
+        function renderAnswerSheet(sections, titleText = "解答用紙") {
+            currentSections = Array.isArray(sections) ? sections : [];
+            currentSheetTitle = titleText || "解答用紙";
+            updateStep1Badge();
+
+            const W = canvas.width;  // 890
+            const H = canvas.height; // 1260
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, W, H);
+
+            // 1. 四隅の位置補正用「■」マーカー (28x28px)
+            const mSize = 28;
+            const mMargin = 24;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(mMargin, mMargin, mSize, mSize); // 左上
+            ctx.fillRect(W - mMargin - mSize, mMargin, mSize, mSize); // 右上
+            ctx.fillRect(mMargin, H - mMargin - mSize, mSize, mSize); // 左下
+            ctx.fillRect(W - mMargin - mSize, H - mMargin - mSize, mSize, mSize); // 右下
+
+            // 2. 2段構成ヘッダー（1段目：テストタイトル全幅、2段目：得点欄 ＋ 拡大された年・組・番・氏名欄）
+            const headerLeft = 64;
+            const headerRight = W - 64;
+            const availHeaderW = headerRight - headerLeft;
+
+            // 1段目：タイトル（切れないように文字サイズ自動縮小）
+            ctx.fillStyle = '#0f172a';
+            let titleFontSize = 20;
+            ctx.font = `bold ${titleFontSize}px "Noto Sans JP", Inter, sans-serif`;
+            while (ctx.measureText(currentSheetTitle).width > availHeaderW && titleFontSize > 12) {
+                titleFontSize -= 1;
+                ctx.font = `bold ${titleFontSize}px "Noto Sans JP", Inter, sans-serif`;
+            }
+            ctx.textBaseline = 'middle';
+            ctx.fillText(currentSheetTitle, headerLeft, 36);
+
+            // 2段目：左側に「得点」ボックス、右側に大きく書ける「年・組・番・氏名」ボックス (y: 52, height: 38)
+            const boxY = 50;
+            const boxH = 38;
+
+            // 得点枠 (x: 64, w: 140)
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1.8;
+            ctx.strokeRect(headerLeft, boxY, 140, boxH);
+            ctx.fillStyle = '#334155';
+            ctx.font = 'bold 12px "Noto Sans JP", sans-serif';
+            ctx.fillText('得点', headerLeft + 8, boxY + boxH / 2);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '12px "Noto Sans JP", sans-serif';
+            ctx.fillText('点', headerLeft + 118, boxY + boxH / 2 + 4);
+
+            // 年・組・番・氏名枠 (x: 225 〜 826, 高さ38pxで大きく確保)
+            let curX = 225;
+            const drawStudentField = (boxW, labelText) => {
+                ctx.strokeStyle = '#0f172a';
+                ctx.lineWidth = 1.6;
+                ctx.strokeRect(curX, boxY, boxW, boxH);
+                curX += boxW + 5;
+                ctx.fillStyle = '#0f172a';
+                ctx.font = 'bold 13px "Noto Sans JP", sans-serif';
+                ctx.fillText(labelText, curX, boxY + boxH / 2 + 1);
+                curX += ctx.measureText(labelText).width + 10;
+            };
+
+            drawStudentField(52, '年');
+            drawStudentField(52, '組');
+            drawStudentField(58, '番');
+
+            // 氏名ラベル＋大型氏名枠 (幅315px, 高さ38px)
+            ctx.fillStyle = '#0f172a';
+            ctx.font = 'bold 13px "Noto Sans JP", sans-serif';
+            ctx.fillText('氏名:', curX, boxY + boxH / 2 + 1);
+            curX += ctx.measureText('氏名:').width + 6;
+            const nameBoxW = headerRight - curX;
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1.8;
+            ctx.strokeRect(curX, boxY, nameBoxW, boxH);
+
+            layoutData = [];
+
+            // 設問がまだ無い場合はガイドメッセージを表示して終了
+            if (currentSections.length === 0) {
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = 'bold 16px "Noto Sans JP", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('左側の STEP 1 に問題・解答テキストを貼り付けて', W / 2, H / 2 - 16);
+                ctx.fillText('「✨ 貼り付けたテキストから解答用紙を自動設計」を押してください', W / 2, H / 2 + 16);
+                ctx.textAlign = 'left';
+
+                cleanSheetImageData = ctx.getImageData(0, 0, W, H);
+                cleanSheetDataUrl = canvas.toDataURL('image/png');
+                return;
+            }
+
+            // 3. 大問・解答枠の配置計算
+            const contentTop = 102;
+            const contentBottom = H - 56;
+            const availH = contentBottom - contentTop;
+            const contentLeft = 64;
+            const contentW = W - 128; // 762px
+
+            // 基準高さの設定
+            let baseRowH = 38;
+            let longRowH = 62;
+            let rowGap = 8;
+            let secHeaderH = 24;
+            let secGap = 12;
+
+            if (currentSpacingMode === 'comfortable') {
+                baseRowH = 46;
+                longRowH = 74;
+                rowGap = 11;
+            } else if (currentSpacingMode === 'compact') {
+                baseRowH = 31;
+                longRowH = 50;
+                rowGap = 6;
+                secHeaderH = 21;
+                secGap = 8;
+            }
+
+            // 全セクションの行構造を事前計算
+            const preparedSections = currentSections.map(sec => ({
+                title: sec.title,
+                rows: getRowItemsForSection(sec.questions, currentLayoutMode === 'single-full' ? 'single-full' : 'single-grid')
+            }));
+
+            // 必要な総高さを計算して自動拡大・縮小倍率を算出
+            let rawTotalH = 0;
+            preparedSections.forEach(ps => {
+                rawTotalH += secHeaderH + 6;
+                ps.rows.forEach(r => {
+                    const isLong = r.some(item => item.q.type === 'long');
+                    rawTotalH += (isLong ? longRowH : baseRowH) + rowGap;
+                });
+                rawTotalH += secGap;
+            });
+
+            if (currentSpacingMode === 'auto-stretch' && currentLayoutMode !== 'two-column') {
+                const scale = Math.min(1.42, Math.max(0.72, availH / Math.max(1, rawTotalH)));
+                baseRowH = Math.round(baseRowH * scale);
+                longRowH = Math.round(longRowH * scale);
+                rowGap = Math.max(5, Math.round(rowGap * scale));
+                secGap = Math.max(6, Math.round(secGap * scale));
+            } else if (rawTotalH > availH && currentLayoutMode !== 'two-column') {
+                const shrink = availH / rawTotalH;
+                baseRowH = Math.max(26, Math.floor(baseRowH * shrink));
+                longRowH = Math.max(42, Math.floor(longRowH * shrink));
+                rowGap = Math.max(4, Math.floor(rowGap * shrink));
+                secGap = Math.max(5, Math.floor(secGap * shrink));
+            }
+
+            // 描画実行
+            let curY = contentTop;
+            let colIdx = 0;
+            const isTwoCol = currentLayoutMode === 'two-column';
+            const colW = isTwoCol ? Math.floor((contentW - 28) / 2) : contentW;
+
+            preparedSections.forEach(ps => {
+                // 2段組の場合で下端を超えるなら右カラムへ移動
+                if (isTwoCol && colIdx === 0 && curY + secHeaderH + baseRowH > contentBottom) {
+                    colIdx = 1;
+                    curY = contentTop;
+                }
+                const secX = contentLeft + colIdx * (colW + 28);
+
+                // 大問見出しバー
+                ctx.fillStyle = '#e2e8f0';
+                ctx.fillRect(secX, curY, colW, secHeaderH);
+                ctx.fillStyle = '#0f172a';
+                ctx.font = 'bold 12px "Noto Sans JP", Inter, sans-serif';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(ps.title, secX + 8, curY + secHeaderH / 2);
+                curY += secHeaderH + 6;
+
+                ps.rows.forEach(row => {
+                    const isLong = row.some(item => item.q.type === 'long');
+                    const h = isLong ? longRowH : baseRowH;
+
+                    if (isTwoCol && colIdx === 0 && curY + h > contentBottom) {
+                        colIdx = 1;
+                        curY = contentTop;
+                    }
+                    const rowX = contentLeft + colIdx * (colW + 28);
+                    const totalGridCols = currentLayoutMode === 'single-full' ? 6 : 12;
+                    const unitW = colW / totalGridCols;
+
+                    let spanCursor = 0;
+                    row.forEach(item => {
+                        const cellX = rowX + spanCursor * unitW;
+                        const cellW = item.span * unitW;
+                        spanCursor += item.span;
+
+                        // 問題番号ラベル領域（枠の左外側）
+                        const qLabel = String(item.q.qNum || '');
+                        ctx.font = 'bold 12px "Noto Sans JP", Inter, sans-serif';
+                        const measuredLabel = ctx.measureText(qLabel).width;
+                        const labelW = Math.max(30, Math.min(54, measuredLabel + 10));
+
+                        ctx.fillStyle = '#0f172a';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(qLabel, cellX + 2, curY + h / 2);
+
+                        // 解答枠（完全白紙の黒実線ボックス）
+                        const boxX = Math.round(cellX + labelW);
+                        const boxW = Math.max(36, Math.round(cellW - labelW - 8));
+                        const boxRectY = Math.round(curY);
+
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(boxX, boxRectY, boxW, h);
+                        ctx.strokeStyle = '#0f172a';
+                        ctx.lineWidth = 1.6;
+                        ctx.strokeRect(boxX, boxRectY, boxW, h);
+
+                        // 右下の薄い配点表記
+                        const ptStr = `${item.q.points}点`;
+                        ctx.fillStyle = '#94a3b8';
+                        ctx.font = '10px "Noto Sans JP", Inter, sans-serif';
+                        const ptW = ctx.measureText(ptStr).width;
+                        ctx.fillText(ptStr, boxX + boxW - ptW - 4, boxRectY + h - 8);
+
+                        layoutData.push({
+                            ...item.q,
+                            sectionTitle: ps.title,
+                            rect: { x: boxX, y: boxRectY, w: boxW, h: h }
+                        });
+                    });
+
+                    curY += h + rowGap;
+                });
+
+                curY += secGap;
+            });
+
+            // 白紙データを確実にキャッシュ保存
+            cleanSheetImageData = ctx.getImageData(0, 0, W, H);
+            cleanSheetDataUrl = canvas.toDataURL('image/png');
+            scannedSheetImageData = null;
+        }
+
+        // STEP 1 イベントリスナー
+        document.getElementById('btn-parse-local').addEventListener('click', () => {
+            const raw = document.getElementById('test-input').value.trim();
+            if (!raw) {
+                showMessage('STEP 1 のテキスト欄に問題文または模範解答・配点テキストを貼り付けてください。', 'error');
+                return;
+            }
+            const parsed = parseTestTextLocally(raw);
+            if (!document.getElementById('project-name-input').value.trim()) {
+                document.getElementById('project-name-input').value = parsed.title;
+            }
+            renderAnswerSheet(parsed.sections, parsed.title);
+            renderQuestionEditor();
+            showMessage(`解答用紙を自動設計しました！（全 ${layoutData.length} 枠）`, 'success');
+        });
+
+        document.getElementById('btn-clear-input').addEventListener('click', () => {
+            document.getElementById('test-input').value = '';
+            document.getElementById('project-name-input').value = '';
+            currentSections = [];
+            renderQuestionEditor();
+            renderAnswerSheet([], '解答用紙');
+            showMessage('入力内容と解答用紙をクリアしました。', 'info');
+        });
+
+        document.getElementById('layout-mode-select').addEventListener('change', (e) => {
+            currentLayoutMode = e.target.value;
+            renderAnswerSheet(currentSections, currentSheetTitle);
+        });
+
+        document.getElementById('box-spacing-select').addEventListener('change', (e) => {
+            currentSpacingMode = e.target.value;
+            renderAnswerSheet(currentSections, currentSheetTitle);
+        });
+
+        // AI解析ボタン（Gemini APIで自由形式テキストから構造化抽出）
+        document.getElementById('btn-parse-ai').addEventListener('click', async () => {
+            const raw = document.getElementById('test-input').value.trim();
+            if (!raw) {
+                showMessage('解析する問題テキストを入力してください。', 'error');
+                return;
+            }
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            if (!apiKey) {
+                // APIキー未入力時は内蔵スマート解析を実行
+                const parsed = parseTestTextLocally(raw);
+                renderAnswerSheet(parsed.sections, parsed.title);
+                renderQuestionEditor();
+                showMessage('内蔵スマート解析エンジンで解答用紙を設計しました。', 'success');
+                return;
+            }
+
+            const btn = document.getElementById('btn-parse-ai');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ 解析中...';
+
+            try {
+                const prompt = `以下のテスト問題・解答テキストから、テストのタイトルと各大問の解答枠リストをJSON形式で抽出してください。
+出力JSONスキーマ:
+{
+  "title": "テスト名",
+  "sections": [
+    {
+      "title": "大問1 ...",
+      "questions": [
+        { "qNum": "①", "type": "symbol|word|phrase|sentence|long", "answer": "模範解答", "points": 2, "rubric": "採点基準" }
+      ]
+    }
+  ]
+}
+テキスト:
+${raw}`;
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        generationConfig: { responseMimeType: 'application/json' }
+                    })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const jsonStr = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+                const parsed = JSON.parse(jsonStr);
+                if (Array.isArray(parsed.sections) && parsed.sections.length > 0) {
+                    renderAnswerSheet(parsed.sections, parsed.title || '解答用紙');
+                    renderQuestionEditor();
+                    showMessage(`AI解析により全 ${layoutData.length} 枠の解答用紙を設計しました！`, 'success');
+                } else {
+                    throw new Error('有効な設問が抽出されませんでした');
+                }
+            } catch (err) {
+                console.warn('AI parse fallback to local parser:', err);
+                const parsed = parseTestTextLocally(raw);
+                renderAnswerSheet(parsed.sections, parsed.title);
+                renderQuestionEditor();
+                showMessage('内蔵スマート解析エンジンで解答用紙を設計しました。', 'info');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = origText;
+            }
+        });
+
+        // ==========================================
+        // 確実な印刷処理（白紙の解答用紙印刷 ＆ 採点済み答案印刷）
+        // ==========================================
+        async function executePrintDataUrls(dataUrlList) {
+            if (!dataUrlList || dataUrlList.length === 0) return;
+            const container = document.getElementById('batch-print-container');
+            container.innerHTML = '';
+
+            const loadPromises = dataUrlList.map(url => {
+                return new Promise((resolve) => {
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = 'batch-print-page';
+                    const img = document.createElement('img');
+                    img.onload = () => resolve();
+                    img.onerror = () => resolve();
+                    img.src = url;
+                    pageDiv.appendChild(img);
+                    container.appendChild(pageDiv);
+                });
+            });
+
+            await Promise.all(loadPromises);
+            await new Promise(r => requestAnimationFrame(() => setTimeout(r, 120)));
+            window.print();
+        }
+
+        function printBlankAnswerSheet() {
+            if (!currentSections || currentSections.length === 0) {
+                showMessage('先に STEP 1 で問題テキストから解答用紙を作成してください。', 'error');
+                return;
+            }
+            // 採点途中であっても確実に白紙の解答用紙を印刷するため cleanSheetDataUrl を使用
+            if (!cleanSheetDataUrl && cleanSheetImageData) {
+                const tempC = document.createElement('canvas');
+                tempC.width = canvas.width;
+                tempC.height = canvas.height;
+                tempC.getContext('2d').putImageData(cleanSheetImageData, 0, 0);
+                cleanSheetDataUrl = tempC.toDataURL('image/png');
+            }
+            if (!cleanSheetDataUrl) {
+                showMessage('白紙の解答用紙データが見つかりません。再度「自動設計」を押してください。', 'error');
+                return;
+            }
+            executePrintDataUrls([cleanSheetDataUrl]);
+        }
+
+        function printCurrentGradedSheet() {
+            const currentUrl = canvas.toDataURL('image/png');
+            executePrintDataUrls([currentUrl]);
+        }
+
+        document.getElementById('btn-print-sheet').addEventListener('click', printBlankAnswerSheet);
+        document.getElementById('btn-print-sheet-top').addEventListener('click', printBlankAnswerSheet);
+        document.getElementById('btn-print-graded').addEventListener('click', printCurrentGradedSheet);
+        document.getElementById('btn-print-graded-top').addEventListener('click', printCurrentGradedSheet);
+
+        // 全員分の採点済み答案をまとめて一括印刷
+        document.getElementById('btn-print-all-graded').addEventListener('click', async () => {
+            const urls = batchSheets
+                .map(b => b.gradedDataUrl || b.rawDataUrl)
+                .filter(Boolean);
+            if (urls.length === 0) {
+                showMessage('印刷できる答案データがありません。', 'error');
+                return;
+            }
+            await executePrintDataUrls(urls);
+        });
+
+        // ==========================================
+        // STEP 2: スキャン画像の四隅「■」マーカー自動位置補正＆一括読込
+        // ==========================================
+        function loadImageFromDataUrl(dataUrl) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = (err) => reject(err);
+                img.src = dataUrl;
+            });
+        }
+
+        function compressImageForStorage(img) {
+            const normCanvas = document.createElement('canvas');
+            const maxW = 1050;
+            const origW = img.width || img.naturalWidth || 890;
+            const origH = img.height || img.naturalHeight || 1260;
+            const scale = origW > maxW ? (maxW / origW) : 1;
+            normCanvas.width = Math.round(origW * scale);
+            normCanvas.height = Math.round(origH * scale);
+            const nCtx = normCanvas.getContext('2d');
+            nCtx.fillStyle = '#ffffff';
+            nCtx.fillRect(0, 0, normCanvas.width, normCanvas.height);
+            nCtx.drawImage(img, 0, 0, normCanvas.width, normCanvas.height);
+            return normCanvas.toDataURL('image/jpeg', 0.84);
+        }
+
+        // 四隅の黒マーカー■を検出してキャンバスの基準位置（890x1260）へ自動補正して描画
+        function drawAndAlignScannedImage(img) {
+            const W = canvas.width;
+            const H = canvas.height;
+
+            const tempC = document.createElement('canvas');
+            tempC.width = W;
+            tempC.height = H;
+            const tCtx = tempC.getContext('2d');
+            tCtx.fillStyle = '#ffffff';
+            tCtx.fillRect(0, 0, W, H);
+            tCtx.drawImage(img, 0, 0, W, H);
+
+            const imgData = tCtx.getImageData(0, 0, W, H).data;
+
+            function findCornerCentroid(startX, endX, startY, endY) {
+                let sumX = 0, sumY = 0, count = 0;
+                for (let y = startY; y < endY; y += 2) {
+                    for (let x = startX; x < endX; x += 2) {
+                        const idx = (y * W + x) * 4;
+                        const brightness = (imgData[idx] + imgData[idx + 1] + imgData[idx + 2]) / 3;
+                        if (brightness < 90) {
+                            sumX += x;
+                            sumY += y;
+                            count++;
+                        }
+                    }
+                }
+                if (count < 25) return null;
+                return { x: sumX / count, y: sumY / count };
+            }
+
+            const tl = findCornerCentroid(5, 130, 5, 130);
+            const br = findCornerCentroid(W - 130, W - 5, H - 130, H - 5);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, W, H);
+
+            // 設計上の左上マーカー中心は (38, 38)、右下マーカー中心は (890-38=852, 1260-38=1222)
+            const targetTL = { x: 38, y: 38 };
+            const targetBR = { x: W - 38, y: H - 38 };
+
+            if (tl && br && (br.x - tl.x > W * 0.6) && (br.y - tl.y > H * 0.6)) {
+                const scaleX = (targetBR.x - targetTL.x) / (br.x - tl.x);
+                const scaleY = (targetBR.y - targetTL.y) / (br.y - tl.y);
+                const offsetX = targetTL.x - tl.x * scaleX;
+                const offsetY = targetTL.y - tl.y * scaleY;
+
+                ctx.save();
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(scaleX, scaleY);
+                ctx.drawImage(tempC, 0, 0);
+                ctx.restore();
+            } else {
+                ctx.drawImage(tempC, 0, 0);
+            }
+
+            scannedSheetImageData = ctx.getImageData(0, 0, W, H);
+        }
+
+        function updateBatchNavUI() {
+            const navBar = document.getElementById('batch-nav-bar');
+            const batchBtn = document.getElementById('btn-grade-batch');
+            const printAllBtn = document.getElementById('btn-print-all-graded');
+            const badge = document.getElementById('scan-status-badge');
+
+            if (batchSheets.length === 0) {
+                navBar.classList.add('hidden');
+                batchBtn.classList.add('hidden');
+                printAllBtn.classList.add('hidden');
+                badge.textContent = '未読み込み';
+                badge.className = 'text-[11px] font-medium text-slate-400';
+                return;
+            }
+
+            navBar.classList.remove('hidden');
+            batchBtn.classList.remove('hidden');
+            printAllBtn.classList.remove('hidden');
+
+            const gradedCount = batchSheets.filter(b => Array.isArray(b.gradingResults) && b.gradingResults.length > 0).length;
+            batchBtn.innerHTML = `<span>🚀 読み込んだ全答案（${batchSheets.length}名分）を一括AI自動採点</span>`;
+            badge.textContent = `✅ 全${batchSheets.length}枚読込済（採点済: ${gradedCount}/${batchSheets.length}）`;
+            badge.className = 'text-[11px] font-bold text-emerald-700';
+
+            const item = batchSheets[currentBatchIdx];
+            if (item) {
+                const statusMark = item.gradingResults ? '【採点済】' : '【未採点】';
+                document.getElementById('batch-page-indicator').textContent = `${currentBatchIdx + 1} / ${batchSheets.length} 枚目 ${statusMark}`;
+                document.getElementById('batch-file-label').textContent = item.label || '';
+            }
+        }
+
+        async function switchBatchSheet(idx) {
+            if (idx < 0 || idx >= batchSheets.length) return;
+            currentBatchIdx = idx;
+            const item = batchSheets[idx];
+
+            if (!item.rawImg && item.rawDataUrl) {
+                try {
+                    item.rawImg = await loadImageFromDataUrl(item.rawDataUrl);
+                } catch (e) {
+                    console.warn('Image load warning:', e);
+                }
+            }
+
+            if (item.rawImg) {
+                drawAndAlignScannedImage(item.rawImg);
+            }
+
+            // 生徒情報の反映
+            const sInfo = item.studentInfo || { grade: '', classNum: '', number: String(idx + 1), name: '' };
+            document.getElementById('stu-grade').value = sInfo.grade || '';
+            document.getElementById('stu-class').value = sInfo.classNum || '';
+            document.getElementById('stu-number').value = sInfo.number || String(idx + 1);
+            document.getElementById('stu-name').value = sInfo.name || '';
+
+            if (Array.isArray(item.gradingResults) && item.gradingResults.length > 0) {
+                applyGradingResultsToView(item.gradingResults, false);
+            } else {
+                lastGradingResults = null;
+                document.getElementById('total-score-val').textContent = '--';
+                document.getElementById('results-list').innerHTML = '<p class="text-xs text-slate-400 text-center py-4">この答案はまだ採点されていません。「AI自動採点」を押してください。</p>';
+            }
+
+            updateBatchNavUI();
+        }
+
+        document.getElementById('btn-batch-prev').addEventListener('click', () => {
+            if (currentBatchIdx > 0) switchBatchSheet(currentBatchIdx - 1);
+        });
+        document.getElementById('btn-batch-next').addEventListener('click', () => {
+            if (currentBatchIdx < batchSheets.length - 1) switchBatchSheet(currentBatchIdx + 1);
+        });
+        document.getElementById('btn-batch-clear').addEventListener('click', () => {
+            batchSheets = [];
+            currentBatchIdx = -1;
+            lastGradingResults = null;
+            renderAnswerSheet(currentSections, currentSheetTitle);
+            updateBatchNavUI();
+            showMessage('読み込んだスキャン答案をクリアしました。', 'info');
+        });
+
+        async function handleScanFilesUpload(fileList) {
+            if (!fileList || fileList.length === 0) return;
+            const files = Array.from(fileList).sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true }));
+
+            const badge = document.getElementById('scan-status-badge');
+            badge.textContent = '⏳ 一括展開中...';
+            badge.className = 'text-[11px] text-blue-600 font-semibold';
+
+            const newBatchItems = [];
+            try {
+                for (const file of files) {
+                    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                        if (!window.pdfjsLib) {
+                            throw new Error('PDF読み込みライブラリの準備ができていません。');
+                        }
+                        const arrayBuf = await file.arrayBuffer();
+                        const pdfDoc = await window.pdfjsLib.getDocument({ data: arrayBuf }).promise;
+                        const numPages = pdfDoc.numPages;
+
+                        for (let p = 1; p <= numPages; p++) {
+                            badge.textContent = `⏳ PDF展開中 (${p}/${numPages}ページ)...`;
+                            const page = await pdfDoc.getPage(p);
+                            const viewport = page.getViewport({ scale: 1.8 });
+
+                            const pdfCanvas = document.createElement('canvas');
+                            pdfCanvas.width = viewport.width;
+                            pdfCanvas.height = viewport.height;
+                            const pdfCtx = pdfCanvas.getContext('2d');
+                            await page.render({ canvasContext: pdfCtx, viewport }).promise;
+
+                            const pageDataUrl = pdfCanvas.toDataURL('image/jpeg', 0.85);
+                            const img = await loadImageFromDataUrl(pageDataUrl);
+                            pdfCanvas.width = 1;
+                            pdfCanvas.height = 1;
+
+                            newBatchItems.push({
+                                label: numPages > 1 ? `${file.name} (P.${p})` : file.name,
+                                rawImg: img,
+                                rawDataUrl: compressImageForStorage(img),
+                                gradedDataUrl: null,
+                                gradingResults: null,
+                                studentInfo: { grade: '', classNum: '', number: '', name: '' },
+                                totalScore: null
+                            });
+                        }
+                    } else {
+                        const dataUrl = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => resolve(ev.target.result);
+                            reader.onerror = (err) => reject(err);
+                            reader.readAsDataURL(file);
+                        });
+                        const img = await loadImageFromDataUrl(dataUrl);
+                        newBatchItems.push({
+                            label: file.name,
+                            rawImg: img,
+                            rawDataUrl: compressImageForStorage(img),
+                            gradedDataUrl: null,
+                            gradingResults: null,
+                            studentInfo: { grade: '', classNum: '', number: '', name: '' },
+                            totalScore: null
+                        });
+                    }
+                }
+
+                if (newBatchItems.length > 0) {
+                    const startIdx = batchSheets.length;
+                    batchSheets.push(...newBatchItems);
+                    batchSheets.forEach((item, i) => {
+                        if (!item.studentInfo.number) item.studentInfo.number = String(i + 1);
+                    });
+                    await switchBatchSheet(startIdx);
+                    showMessage(`全 ${newBatchItems.length} 枚（合計 ${batchSheets.length} 名分）の答案を読み込みました！`, 'success');
+                }
+            } catch (err) {
+                console.error(err);
+                showMessage(`ファイルの読み込みに失敗しました: ${err.message}`, 'error');
+            }
+        }
+
+        document.getElementById('scan-file-input').addEventListener('change', (e) => {
+            handleScanFilesUpload(e.target.files);
+            e.target.value = '';
+        });
+
+        const dropzone = document.getElementById('scan-dropzone');
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('bg-blue-100/70', 'border-blue-600');
+        });
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('bg-blue-100/70', 'border-blue-600');
+        });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('bg-blue-100/70', 'border-blue-600');
+            if (e.dataTransfer && e.dataTransfer.files) {
+                handleScanFilesUpload(e.dataTransfer.files);
+            }
+        });
+
+        // スキャナーが手元にない時の「サンプル手書き答案自動生成」ボタン
+        document.getElementById('btn-demo-handwriting').addEventListener('click', async () => {
+            if (!layoutData || layoutData.length === 0) {
+                showMessage('先に STEP 1 で問題テキストから解答用紙を作成してください。', 'error');
+                return;
+            }
+            // 白紙をベースにして擬似手書き文字を描画
+            renderAnswerSheet(currentSections, currentSheetTitle);
+
+            ctx.save();
+            ctx.fillStyle = '#1e293b';
+            ctx.font = 'italic 16px "Comic Sans MS", "Noto Sans JP", cursive, sans-serif';
+            ctx.textBaseline = 'middle';
+
+            // 年・組・番・氏名欄にサンプル記入
+            ctx.fillText('2', 245, 69);
+            ctx.fillText('3', 325, 69);
+            ctx.fillText('15', 405, 69);
+            ctx.font = '18px "Noto Sans JP", sans-serif';
+            ctx.fillText('山田 太郎', 565, 69);
+
+            // 各解答枠に8割正解・2割惜しいミスで記入
+            layoutData.forEach((q, idx) => {
+                let sampleAns = q.answer || 'answer';
+                if (idx % 5 === 3 && sampleAns.length > 2) {
+                    // 意図的なスペルミス・惜しい解答を作る
+                    sampleAns = sampleAns.slice(0, -1);
+                }
+                const fontSize = q.rect.h > 45 ? 14 : 13;
+                ctx.font = `italic ${fontSize}px "Comic Sans MS", "Noto Sans JP", sans-serif`;
+                ctx.fillText(sampleAns, q.rect.x + 8, q.rect.y + q.rect.h / 2, Math.max(20, q.rect.w - 36));
+            });
+            ctx.restore();
+
+            const demoDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+            const demoImg = await loadImageFromDataUrl(demoDataUrl);
+
+            batchSheets.push({
+                label: `サンプル手書き答案_${batchSheets.length + 1}.jpg`,
+                rawImg: demoImg,
+                rawDataUrl: demoDataUrl,
+                gradedDataUrl: null,
+                gradingResults: null,
+                studentInfo: { grade: '2', classNum: '3', number: String(batchSheets.length + 1), name: '山田 太郎' },
+                totalScore: null
+            });
+
+            await switchBatchSheet(batchSheets.length - 1);
+            showMessage('サンプル手書き答案を生成して読み込みました！STEP 3 の「AI自動採点」を試せます。', 'success');
+        });
+
+        // ==========================================
+        // STEP 3: 赤ペン添削描画・結果一覧表示・AI採点エンジン
+        // ==========================================
+        function applyGradingResultsToView(results, autoSyncBatch = true) {
+            if (!Array.isArray(results)) return;
+            lastGradingResults = results;
+
+            // スキャン画像（または白紙）をベースに復元してから赤ペンを描画
+            if (scannedSheetImageData) {
+                ctx.putImageData(scannedSheetImageData, 0, 0);
+            } else if (cleanSheetImageData) {
+                ctx.putImageData(cleanSheetImageData, 0, 0);
+            }
+
+            let totalEarned = 0;
+
+            results.forEach((res, idx) => {
+                const q = layoutData[idx];
+                if (!q) return;
+                const earned = Number(res.score) || 0;
+                const maxPts = Number(q.points) || 0;
+                totalEarned += earned;
+
+                const { x, y, w, h } = q.rect;
+                ctx.save();
+
+                // 判定マークの描画（⭕・△・❌）
+                const centerX = x + Math.min(24, w * 0.22);
+                const centerY = y + h / 2;
+                const radius = Math.min(13, h * 0.36);
+
+                if (res.status === 'correct' || earned >= maxPts) {
+                    ctx.strokeStyle = 'rgba(220, 38, 38, 0.85)';
+                    ctx.lineWidth = 2.6;
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else if (res.status === 'partial' || (earned > 0 && earned < maxPts)) {
+                    ctx.strokeStyle = 'rgba(217, 119, 6, 0.9)';
+                    ctx.lineWidth = 2.4;
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY - radius);
+                    ctx.lineTo(centerX - radius, centerY + radius * 0.85);
+                    ctx.lineTo(centerX + radius, centerY + radius * 0.85);
+                    ctx.closePath();
+                    ctx.stroke();
+                } else {
+                    ctx.strokeStyle = 'rgba(220, 38, 38, 0.85)';
+                    ctx.lineWidth = 2.4;
+                    ctx.beginPath();
+                    ctx.moveTo(centerX - radius * 0.8, centerY - radius * 0.8);
+                    ctx.lineTo(centerX + radius * 0.8, centerY + radius * 0.8);
+                    ctx.moveTo(centerX + radius * 0.8, centerY - radius * 0.8);
+                    ctx.lineTo(centerX - radius * 0.8, centerY + radius * 0.8);
+                    ctx.stroke();
+                }
+
+                // 得点表記 (+2 など)
+                ctx.fillStyle = '#dc2626';
+                ctx.font = 'bold 12px Inter, "Noto Sans JP", sans-serif';
+                const scoreText = `${earned}/${maxPts}`;
+                const stW = ctx.measureText(scoreText).width;
+                ctx.fillText(scoreText, x + w - stW - 6, y + 13);
+
+                // 不正解・部分点時の赤ペン模範解答添削
+                if (earned < maxPts && q.answer) {
+                    ctx.fillStyle = 'rgba(220, 38, 38, 0.9)';
+                    ctx.font = 'bold 10px "Noto Sans JP", Inter, sans-serif';
+                    ctx.fillText(`正: ${q.answer}`, x + 38, y + h - 5, Math.max(30, w - 75));
+                }
+
+                ctx.restore();
+            });
+
+            // ヘッダー左上の「得点」専用枠に合計点を大きく赤字で記入
+            const formattedTotal = Number.isInteger(totalEarned) ? totalEarned : Number(totalEarned.toFixed(1));
+            ctx.save();
+            ctx.fillStyle = '#dc2626';
+            ctx.font = 'bold 24px Inter, sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(formattedTotal), 115, 69);
+            ctx.restore();
+
+            document.getElementById('total-score-val').textContent = formattedTotal;
+
+            // 左パネルの採点結果リスト＆手動調整UIを更新
+            renderGradingResultsList(results);
+
+            // 現在選択中のバッチアイテムにも保存
+            if (autoSyncBatch && currentBatchIdx >= 0 && batchSheets[currentBatchIdx]) {
+                batchSheets[currentBatchIdx].gradingResults = results;
+                batchSheets[currentBatchIdx].totalScore = formattedTotal;
+                batchSheets[currentBatchIdx].gradedDataUrl = canvas.toDataURL('image/jpeg', 0.86);
+                updateBatchNavUI();
+            }
+        }
+
+        function renderGradingResultsList(results) {
+            const listEl = document.getElementById('results-list');
+            listEl.innerHTML = '';
+
+            results.forEach((res, idx) => {
+                const q = layoutData[idx] || { qNum: `(${idx + 1})`, points: 2, answer: '' };
+                const badgeColor = res.status === 'correct'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                    : res.status === 'partial'
+                        ? 'bg-amber-100 text-amber-800 border-amber-200'
+                        : 'bg-rose-100 text-rose-800 border-rose-200';
+                const badgeLabel = res.status === 'correct' ? '⭕ 正解' : res.status === 'partial' ? '△ 部分点' : '❌ 不正解';
+
+                const card = document.createElement('div');
+                card.className = 'p-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs space-y-1';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-1.5">
+                            <span class="font-bold text-slate-800">${q.qNum}</span>
+                            <span class="text-[11px] font-bold px-2 py-0.5 rounded-full border ${badgeColor}">${badgeLabel}</span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <span class="text-[11px] text-slate-500">得点調整:</span>
+                            <input type="number" step="0.5" min="0" max="${q.points}" value="${res.score}" data-idx="${idx}"
+                                class="manual-score-input w-14 px-1.5 py-0.5 text-right font-bold text-red-600 border border-slate-300 rounded bg-white">
+                            <span class="text-[11px] text-slate-500">/ ${q.points}点</span>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-slate-600">
+                        <span class="font-semibold text-slate-500">読取解答:</span> ${res.recognizedText || '(空欄)'}
+                        <span class="mx-1 text-slate-300">|</span>
+                        <span class="font-semibold text-slate-500">模範解答:</span> ${q.answer || '-'}
+                    </div>
+                    ${res.feedback ? `<div class="text-[11px] text-rose-700 bg-rose-50 px-2 py-1 rounded border border-rose-100">💬 ${res.feedback}</div>` : ''}
+                `;
+                listEl.appendChild(card);
+            });
+
+            // 手動での得点微調整イベント
+            listEl.querySelectorAll('.manual-score-input').forEach(inp => {
+                inp.addEventListener('change', (e) => {
+                    const idx = Number(e.target.dataset.idx);
+                    const q = layoutData[idx];
+                    if (!q || !lastGradingResults[idx]) return;
+                    const newScore = Math.max(0, Math.min(Number(q.points), parseFloat(e.target.value) || 0));
+                    lastGradingResults[idx].score = newScore;
+                    if (newScore >= q.points) {
+                        lastGradingResults[idx].status = 'correct';
+                    } else if (newScore > 0) {
+                        lastGradingResults[idx].status = 'partial';
+                    } else {
+                        lastGradingResults[idx].status = 'incorrect';
+                    }
+                    applyGradingResultsToView(lastGradingResults, true);
+                    recordOrUpdateCurrentStudentInRoster(false);
+                });
+            });
+        }
+
+        // 現在キャンバスに表示されている答案1枚をクロップしてAI採点するコア非同期関数
+        async function gradeCurrentCanvasSheet(statusPrefix = "") {
+            if (!layoutData || layoutData.length === 0) {
+                showMessage('先に STEP 1 で解答用紙を作成してください。', 'error');
+                return null;
+            }
+            if (scannedSheetImageData) {
+                ctx.putImageData(scannedSheetImageData, 0, 0);
+            }
+
+            const progressBox = document.getElementById('grade-progress-box');
+            const progressText = document.getElementById('grade-progress-text');
+            const progressPercent = document.getElementById('grade-progress-percent');
+            const progressBar = document.getElementById('grade-progress-bar');
+            const ocrStudentEnabled = document.getElementById('chk-ocr-student').checked;
+
+            progressBox.classList.remove('hidden');
+            progressText.textContent = `${statusPrefix}各解答枠と氏名欄をクロップ中...`;
+            progressPercent.textContent = '20%';
+            progressBar.style.width = '20%';
+
+            // 1. 拡大された「年・組・番・氏名」領域 (x:220, y:46, w:610, h:44) をクロップ
+            const stuCropW = 610;
+            const stuCropH = 44;
+            const stuCropCanvas = document.createElement('canvas');
+            stuCropCanvas.width = stuCropW;
+            stuCropCanvas.height = stuCropH;
+            stuCropCanvas.getContext('2d').drawImage(canvas, 220, 46, stuCropW, stuCropH, 0, 0, stuCropW, stuCropH);
+
+            // 2. 全解答枠の内側3pxを切り出し
+            const cropItems = [];
+            const pad = 3;
+            for (let i = 0; i < layoutData.length; i++) {
+                const q = layoutData[i];
+                const sx = Math.max(0, Math.floor(q.rect.x + pad));
+                const sy = Math.max(0, Math.floor(q.rect.y + pad));
+                const sw = Math.max(10, Math.floor(q.rect.w - pad * 2));
+                const sh = Math.max(10, Math.floor(q.rect.h - pad * 2));
+
+                const itemCanvas = document.createElement('canvas');
+                itemCanvas.width = sw;
+                itemCanvas.height = sh;
+                itemCanvas.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+                cropItems.push({ index: i + 1, q, canvas: itemCanvas, w: sw, h: sh });
+            }
+
+            // 3. 縦1列の合成シート作成
+            const labelColW = 115;
+            const rowPadding = 8;
+            const headerRowH = ocrStudentEnabled ? 52 : 0;
+            const sheetW = labelColW + Math.max(stuCropW, ...cropItems.map(c => c.w)) + 20;
+            const sheetH = headerRowH + cropItems.reduce((sum, c) => sum + Math.max(32, c.h) + rowPadding, 16);
+
+            const compositeCanvas = document.createElement('canvas');
+            compositeCanvas.width = sheetW;
+            compositeCanvas.height = sheetH;
+            const compCtx = compositeCanvas.getContext('2d');
+            compCtx.fillStyle = '#ffffff';
+            compCtx.fillRect(0, 0, sheetW, sheetH);
+
+            let curY = 8;
+            if (ocrStudentEnabled) {
+                compCtx.fillStyle = '#eff6ff';
+                compCtx.fillRect(4, curY, labelColW - 8, 46);
+                compCtx.strokeStyle = '#93c5fd';
+                compCtx.strokeRect(4, curY, sheetW - 8, 46);
+                compCtx.fillStyle = '#1e3a8a';
+                compCtx.font = 'bold 11px Inter, sans-serif';
+                compCtx.fillText('[STUDENT] 氏名欄', 8, curY + 26);
+                compCtx.drawImage(stuCropCanvas, labelColW, curY + 1);
+                curY += 46 + rowPadding;
+            }
+
+            for (const item of cropItems) {
+                const rowH = Math.max(32, item.h);
+                compCtx.fillStyle = '#f1f5f9';
+                compCtx.fillRect(4, curY, labelColW - 8, rowH);
+                compCtx.strokeStyle = '#cbd5e1';
+                compCtx.strokeRect(4, curY, sheetW - 8, rowH);
+
+                compCtx.fillStyle = '#0f172a';
+                compCtx.font = 'bold 12px Inter, sans-serif';
+                compCtx.fillText(`[Q${item.index}] ${item.q.qNum}`, 10, curY + 20);
+
+                compCtx.drawImage(item.canvas, labelColW, curY + Math.floor((rowH - item.h) / 2));
+                curY += rowH + rowPadding;
+            }
+
+            const compositeDataUrl = compositeCanvas.toDataURL('image/jpeg', 0.88);
+            const previewImg = document.getElementById('crop-preview-img');
+            previewImg.src = compositeDataUrl;
+            previewImg.classList.remove('hidden');
+
+            progressText.textContent = `${statusPrefix}AIが筆跡を読み取り・採点中...`;
+            progressPercent.textContent = '60%';
+            progressBar.style.width = '60%';
+
+            const apiKey = document.getElementById('api-key-input').value.trim();
+            let finalResults = [];
+            let detectedStudent = null;
+
+            if (apiKey) {
+                try {
+                    const base64Img = compositeDataUrl.split(',')[1];
+                    const rubricLines = layoutData.map((q, idx) =>
+                        `Q${idx + 1} (${q.qNum}): 模範解答="${q.answer}", 配点=${q.points}点, 基準="${q.rubric || '完全一致または意味・文法が正しければ正解'}"`
+                    ).join('\n');
+
+                    const prompt = `あなたは熟練の英語教師です。添付された画像は、生徒の解答用紙から各解答枠を縦1列に切り出して並べたシートです。
+右下に薄く印字されている「2点」などの配点文字は生徒の筆跡として読まないでください。
+${ocrStudentEnabled ? '1行目の [STUDENT] 欄から「年・組・番・氏名」も読み取ってください。' : ''}
+
+以下の採点基準に従って Q1〜Q${layoutData.length} を採点し、JSONで返してください。
+${rubricLines}
+
+出力JSON形式:
+{
+  "studentInfo": { "grade": "2", "classNum": "3", "number": "15", "name": "山田 太郎" },
+  "results": [
+    { "index": 1, "recognizedText": "読み取った文字", "status": "correct|partial|incorrect", "score": 2, "feedback": "添削コメント" }
+  ]
+}`;
+
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: prompt },
+                                    { inlineData: { mimeType: 'image/jpeg', data: base64Img } }
+                                ]
+                            }],
+                            generationConfig: { responseMimeType: 'application/json' }
+                        })
+                    });
+
+                    if (!response.ok) throw new Error(`Gemini API HTTP ${response.status}`);
+                    const data = await response.json();
+                    const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}');
+
+                    if (parsed.studentInfo) {
+                        detectedStudent = parsed.studentInfo;
+                    }
+                    if (Array.isArray(parsed.results)) {
+                        finalResults = layoutData.map((q, idx) => {
+                            const found = parsed.results.find(r => Number(r.index) === idx + 1) || parsed.results[idx] || {};
+                            const sc = Math.max(0, Math.min(Number(q.points), Number(found.score) || 0));
+                            return {
+                                qNum: q.qNum,
+                                recognizedText: found.recognizedText ?? '',
+                                status: found.status || (sc >= q.points ? 'correct' : sc > 0 ? 'partial' : 'incorrect'),
+                                score: sc,
+                                maxPoints: q.points,
+                                feedback: found.feedback || ''
+                            };
+                        });
+                    }
+                } catch (err) {
+                    console.warn('API grading error, falling back to simulation:', err);
+                    showMessage(`API通信エラーのためデモ採点モードで実行しました (${err.message})`, 'info');
+                }
+            }
+
+            // APIキー未入力時またはエラー時のフォールバック採点シミュレーション
+            if (finalResults.length === 0) {
+                await new Promise(r => setTimeout(r, 350));
+                finalResults = layoutData.map((q, idx) => {
+                    const isMiss = idx % 5 === 3;
+                    const isPartial = idx % 7 === 4 && q.points >= 3;
+                    const score = isMiss ? 0 : isPartial ? Math.max(1, q.points - 1) : q.points;
+                    return {
+                        qNum: q.qNum,
+                        recognizedText: isMiss ? (q.answer ? q.answer.slice(0, -1) : '---') : (q.answer || '記述解答'),
+                        status: score >= q.points ? 'correct' : score > 0 ? 'partial' : 'incorrect',
+                        score,
+                        maxPoints: q.points,
+                        feedback: isMiss ? `スペルを確認しましょう（正: ${q.answer}）` : isPartial ? '語順・時制に一部減点あり' : '正解です！'
+                    };
+                });
+            }
+
+            // 読み取った生徒情報をフォームとバッチデータに反映
+            if (detectedStudent) {
+                if (detectedStudent.grade) document.getElementById('stu-grade').value = detectedStudent.grade;
+                if (detectedStudent.classNum) document.getElementById('stu-class').value = detectedStudent.classNum;
+                if (detectedStudent.number) document.getElementById('stu-number').value = detectedStudent.number;
+                if (detectedStudent.name) document.getElementById('stu-name').value = detectedStudent.name;
+            }
+
+            if (currentBatchIdx >= 0 && batchSheets[currentBatchIdx]) {
+                batchSheets[currentBatchIdx].studentInfo = {
+                    grade: document.getElementById('stu-grade').value.trim(),
+                    classNum: document.getElementById('stu-class').value.trim(),
+                    number: document.getElementById('stu-number').value.trim() || String(currentBatchIdx + 1),
+                    name: document.getElementById('stu-name').value.trim()
+                };
+            }
+
+            applyGradingResultsToView(finalResults, true);
+            recordOrUpdateCurrentStudentInRoster(false);
+
+            progressText.textContent = `${statusPrefix}採点完了！`;
+            progressPercent.textContent = '100%';
+            progressBar.style.width = '100%';
+
+            return finalResults;
+        }
+
+        // 単一答案の採点ボタン
+        document.getElementById('btn-grade-single').addEventListener('click', async () => {
+            await gradeCurrentCanvasSheet();
+            showMessage('答案の自動採点と赤ペン添削が完了しました！', 'success');
+        });
+
+        // 45人・50人以上の一括連続AI採点ボタン
+        document.getElementById('btn-grade-batch').addEventListener('click', async () => {
+            if (batchSheets.length === 0) return;
+            const skipGraded = document.getElementById('chk-skip-graded').checked;
+
+            for (let i = 0; i < batchSheets.length; i++) {
+                if (skipGraded && Array.isArray(batchSheets[i].gradingResults) && batchSheets[i].gradingResults.length > 0) {
+                    continue;
+                }
+                await switchBatchSheet(i);
+                await gradeCurrentCanvasSheet(`[${i + 1}/${batchSheets.length}枚目] `);
+            }
+            showMessage(`全 ${batchSheets.length} 名分の一括採点と成績リスト記録が完了しました！`, 'success');
+        });
+
+        // ==========================================
+        // クラス成績リスト記録 ＆ Excel(CSV)出力
+        // ==========================================
+        function renderRosterPreview() {
+            const badge = document.getElementById('roster-count-badge');
+            const box = document.getElementById('roster-preview-box');
+            const list = document.getElementById('roster-preview-list');
+
+            badge.textContent = `記録数: ${recordedStudents.length}名`;
+            if (recordedStudents.length === 0) {
+                box.classList.add('hidden');
+                return;
+            }
+            box.classList.remove('hidden');
+            list.innerHTML = '';
+
+            recordedStudents.forEach((stu, i) => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center justify-between bg-white px-2 py-1 rounded border border-slate-200';
+                const label = `${stu.grade ? stu.grade + '年' : ''}${stu.classNum ? stu.classNum + '組' : ''}${stu.number ? stu.number + '番' : ''} ${stu.name || '氏名未入力'}`.trim();
+                row.innerHTML = `
+                    <span class="font-medium text-slate-700 truncate">${label}</span>
+                    <div class="flex items-center gap-2 shrink-0">
+                        <span class="font-bold text-red-600">${stu.totalScore} / ${stu.maxScore}点</span>
+                        <button type="button" data-idx="${i}" class="btn-del-roster text-slate-400 hover:text-red-600">✕</button>
+                    </div>
+                `;
+                list.appendChild(row);
+            });
+
+            list.querySelectorAll('.btn-del-roster').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = Number(e.currentTarget.dataset.idx);
+                    recordedStudents.splice(idx, 1);
+                    renderRosterPreview();
+                });
+            });
+        }
+
+        function recordOrUpdateCurrentStudentInRoster(incrementNumber = true) {
+            if (!lastGradingResults || lastGradingResults.length === 0) {
+                if (incrementNumber) showMessage('先に答案を採点してください。', 'error');
+                return;
+            }
+            const grade = document.getElementById('stu-grade').value.trim();
+            const classNum = document.getElementById('stu-class').value.trim();
+            const number = document.getElementById('stu-number').value.trim() || String(recordedStudents.length + 1);
+            const name = document.getElementById('stu-name').value.trim();
+
+            const totalScore = lastGradingResults.reduce((s, r) => s + (Number(r.score) || 0), 0);
+            const maxScore = layoutData.reduce((s, q) => s + (Number(q.points) || 0), 0);
+            const qScores = {};
+            lastGradingResults.forEach((r, idx) => {
+                const key = layoutData[idx]?.qNum || `Q${idx + 1}`;
+                qScores[key] = r.score;
+            });
+
+            const existingIdx = recordedStudents.findIndex(s =>
+                s.grade === grade && s.classNum === classNum && s.number === number && number !== ''
+            );
+
+            const recordObj = { grade, classNum, number, name, totalScore, maxScore, qScores };
+            if (existingIdx >= 0) {
+                recordedStudents[existingIdx] = recordObj;
+            } else {
+                recordedStudents.push(recordObj);
+            }
+
+            renderRosterPreview();
+
+            if (incrementNumber) {
+                const nextNum = (parseInt(number, 10) || recordedStudents.length) + 1;
+                document.getElementById('stu-number').value = String(nextNum);
+                document.getElementById('stu-name').value = '';
+                showMessage(`出席番号 ${number}番（${name || '氏名未入力'}）の得点（${totalScore}点）を成績リストに記録しました。`, 'success');
+            }
+        }
+
+        document.getElementById('btn-record-student').addEventListener('click', () => {
+            recordOrUpdateCurrentStudentInRoster(true);
+        });
+
+        // Excel (BOM付きUTF-8 CSV) 出力
+        document.getElementById('btn-export-csv').addEventListener('click', () => {
+            if (recordedStudents.length === 0 && (!lastGradingResults || lastGradingResults.length === 0)) {
+                showMessage('出力する採点結果がありません。先に採点を行ってください。', 'error');
+                return;
+            }
+            if (recordedStudents.length === 0 && lastGradingResults) {
+                recordOrUpdateCurrentStudentInRoster(false);
+            }
+
+            const qHeaders = layoutData.map(q => q.qNum);
+            const csvRows = [];
+
+            const escapeCsv = (val) => {
+                const s = String(val ?? '');
+                return `"${s.replace(/"/g, '""')}"`;
+            };
+
+            // 1. クラス全員の得点マトリクス表
+            csvRows.push(['【クラス成績一覧表】', currentSheetTitle].map(escapeCsv).join(','));
+            csvRows.push(['年', '組', '番', '氏名', '合計得点', '満点', ...qHeaders].map(escapeCsv).join(','));
+
+            // 配点行
+            csvRows.push(['', '', '', '【配点】', '', layoutData.reduce((s, q) => s + Number(q.points), 0), ...layoutData.map(q => q.points)].map(escapeCsv).join(','));
+
+            recordedStudents.forEach(stu => {
+                const row = [
+                    stu.grade,
+                    stu.classNum,
+                    stu.number,
+                    stu.name,
+                    stu.totalScore,
+                    stu.maxScore,
+                    ...qHeaders.map(qh => stu.qScores?.[qh] ?? '')
+                ];
+                csvRows.push(row.map(escapeCsv).join(','));
+            });
+
+            // 平均点行
+            if (recordedStudents.length > 0) {
+                const avgTotal = (recordedStudents.reduce((s, st) => s + Number(st.totalScore || 0), 0) / recordedStudents.length).toFixed(1);
+                const avgPerQ = qHeaders.map(qh => {
+                    const vals = recordedStudents.map(st => Number(st.qScores?.[qh] ?? 0));
+                    return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
+                });
+                csvRows.push(['', '', '', '【クラス平均点】', avgTotal, '', ...avgPerQ].map(escapeCsv).join(','));
+            }
+
+            // 2. 現在表示中の答案の設問別詳細
+            if (lastGradingResults && lastGradingResults.length > 0) {
+                csvRows.push('');
+                csvRows.push(['【現在表示中の答案・設問別詳細】'].map(escapeCsv).join(','));
+                csvRows.push(['問題番号', '大問', '生徒の読取解答', '模範解答', '得点', '配点', '判定', '添削コメント'].map(escapeCsv).join(','));
+                lastGradingResults.forEach((r, idx) => {
+                    const q = layoutData[idx] || {};
+                    csvRows.push([
+                        q.qNum || `Q${idx + 1}`,
+                        q.sectionTitle || '',
+                        r.recognizedText || '',
+                        q.answer || '',
+                        r.score,
+                        q.points,
+                        r.status,
+                        r.feedback || ''
+                    ].map(escapeCsv).join(','));
+                });
+            }
+
+            const bom = '\uFEFF';
+            const blob = new Blob([bom + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+            const safeTitle = (currentSheetTitle || '採点結果').replace(/[\\/:*?"<>|]/g, '_');
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${safeTitle}_採点結果.csv`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+            showMessage(`Excel用ファイル「${safeTitle}_採点結果.csv」を出力しました！`, 'success');
+        });
+
+        // ==========================================
+        // 途中経過の保存・復元（スキャン答案画像もすべて含む）
+        // ==========================================
+        function buildCurrentProjectState(includeScanImages = true) {
+            const nameInput = document.getElementById('project-name-input').value.trim();
+            const projectTitle = nameInput || currentSheetTitle || "無題のテスト";
+
+            const serializedBatch = batchSheets.map(item => ({
+                label: item.label,
+                rawDataUrl: includeScanImages ? (item.rawDataUrl || (item.rawImg ? compressImageForStorage(item.rawImg) : null)) : null,
+                gradedDataUrl: includeScanImages ? (item.gradedDataUrl || null) : null,
+                gradingResults: item.gradingResults || null,
+                studentInfo: item.studentInfo || { grade: '', classNum: '', number: '', name: '' },
+                totalScore: item.totalScore ?? null
+            }));
+
+            return {
+                version: "1.3",
+                projectName: projectTitle,
+                sheetTitle: currentSheetTitle,
+                rawTestInput: document.getElementById('test-input').value,
+                layoutMode: currentLayoutMode,
+                spacingMode: currentSpacingMode,
+                sections: currentSections,
+                gradingResults: lastGradingResults,
+                recordedStudents: recordedStudents,
+                batchSheets: serializedBatch,
+                currentBatchIdx: currentBatchIdx,
+                updatedAt: new Date().toISOString()
+            };
+        }
+
+        async function restoreProjectState(stateData) {
+            if (!stateData || !Array.isArray(stateData.sections)) {
+                showMessage('有効な作業データが見つかりませんでした。', 'error');
+                return;
+            }
+            currentSheetTitle = stateData.sheetTitle || stateData.projectName || "復元された解答用紙";
+            currentLayoutMode = stateData.layoutMode || "single-grid";
+            currentSpacingMode = stateData.spacingMode || "auto-stretch";
+
+            document.getElementById('project-name-input').value = stateData.projectName || currentSheetTitle;
+            if (typeof stateData.rawTestInput === 'string') {
+                document.getElementById('test-input').value = stateData.rawTestInput;
+            }
+            document.getElementById('layout-mode-select').value = currentLayoutMode;
+            document.getElementById('box-spacing-select').value = currentSpacingMode;
+
+            renderAnswerSheet(stateData.sections, currentSheetTitle);
+            renderQuestionEditor();
+
+            recordedStudents = Array.isArray(stateData.recordedStudents) ? stateData.recordedStudents : [];
+            renderRosterPreview();
+
+            if (Array.isArray(stateData.batchSheets) && stateData.batchSheets.length > 0) {
+                const restoredBatch = [];
+                for (const b of stateData.batchSheets) {
+                    let imgObj = null;
+                    if (b.rawDataUrl) {
+                        try {
+                            imgObj = await loadImageFromDataUrl(b.rawDataUrl);
+                        } catch (e) {
+                            console.warn("Failed to restore scan image:", e);
+                        }
+                    }
+                    restoredBatch.push({
+                        label: b.label || "答案",
+                        rawImg: imgObj,
+                        rawDataUrl: b.rawDataUrl || null,
+                        gradedDataUrl: b.gradedDataUrl || null,
+                        gradingResults: b.gradingResults || null,
+                        studentInfo: b.studentInfo || { grade: '', classNum: '', number: '', name: '' },
+                        totalScore: b.totalScore ?? null
+                    });
+                }
+                batchSheets = restoredBatch;
+                const targetIdx = (typeof stateData.currentBatchIdx === 'number' && stateData.currentBatchIdx >= 0 && stateData.currentBatchIdx < batchSheets.length)
+                    ? stateData.currentBatchIdx
+                    : 0;
+                await switchBatchSheet(targetIdx);
+            } else {
+                batchSheets = [];
+                currentBatchIdx = -1;
+                updateBatchNavUI();
+
+                if (Array.isArray(stateData.gradingResults) && stateData.gradingResults.length > 0) {
+                    applyGradingResultsToView(stateData.gradingResults, false);
+                } else {
+                    lastGradingResults = null;
+                    document.getElementById('total-score-val').textContent = '--';
+                    document.getElementById('results-list').innerHTML = '<p class="text-xs text-slate-400 text-center py-4">スキャン画像を読み込んで採点ボタンを押すと、ここに各問の判定と添削コメントが表示されます。</p>';
+                }
+            }
+        }
+
+        window.buildCurrentProjectState = buildCurrentProjectState;
+        window.restoreProjectState = restoreProjectState;
+        window.showMessage = showMessage;
+
+        // PCへのファイル保存 (.json)
+        document.getElementById('btn-export-json').addEventListener('click', () => {
+            const state = buildCurrentProjectState(true);
+            const safeName = state.projectName.replace(/[\\/:*?"<>|]/g, '_');
+            const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.download = `${safeName}_作業データ.json`;
+            link.href = URL.createObjectURL(blob);
+            link.click();
+            URL.revokeObjectURL(link.href);
+            const scanCountMsg = state.batchSheets.length > 0 ? `（読み込んだ答案 ${state.batchSheets.length} 枚を含む）` : '';
+            showMessage(`「${safeName}_作業データ.json」${scanCountMsg}をPCに保存しました。`, 'success');
+        });
+
+        // PCからのファイル読込 (.json)
+        document.getElementById('import-json-input').addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                try {
+                    const parsed = JSON.parse(ev.target.result);
+                    await restoreProjectState(parsed);
+                    const restoredCount = Array.isArray(parsed.batchSheets) ? parsed.batchSheets.length : 0;
+                    const extraMsg = restoredCount > 0 ? `（スキャン答案 ${restoredCount} 枚も復元しました）` : '';
+                    showMessage(`作業ファイル「${file.name}」を復元しました！${extraMsg}`, 'success');
+                } catch (err) {
+                    console.error(err);
+                    showMessage('JSONファイルの読み込みに失敗しました。', 'error');
+                } finally {
+                    e.target.value = '';
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // 起動時に解答用紙を初期描画
+        window.addEventListener('DOMContentLoaded', () => {
+            renderAnswerSheet([], "解答用紙");
+        });
+    </script>
+
+    <!-- クラウド＋ブラウザ大容量DB（IndexedDB）連携の途中保存モジュール -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        let db = null;
+        let auth = null;
+        let currentUser = null;
+        let cachedProjectsMap = {};
+
+        function openProjectIdb() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('AiHybridGraderDB', 1);
+                req.onupgradeneeded = (e) => {
+                    const idb = e.target.result;
+                    if (!idb.objectStoreNames.contains('projects')) {
+                        idb.createObjectStore('projects', { keyPath: 'id' });
+                    }
+                };
+                req.onsuccess = (e) => resolve(e.target.result);
+                req.onerror = (e) => reject(e.target.error);
+            });
+        }
+
+        async function saveProjectToIdb(docId, fullState) {
+            try {
+                const idb = await openProjectIdb();
+                return new Promise((resolve, reject) => {
+                    const tx = idb.transaction('projects', 'readwrite');
+                    tx.objectStore('projects').put({ id: docId, state: fullState, updatedAt: fullState.updatedAt });
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = (e) => reject(e.target.error);
+                });
+            } catch (e) {
+                console.warn('IndexedDB save warning:', e);
+                return false;
+            }
+        }
+
+        async function getAllProjectsFromIdb() {
+            try {
+                const idb = await openProjectIdb();
+                return new Promise((resolve) => {
+                    const tx = idb.transaction('projects', 'readonly');
+                    const req = tx.objectStore('projects').getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                    req.onerror = () => resolve([]);
+                });
+            } catch (e) {
+                return [];
+            }
+        }
+
+        async function deleteProjectFromIdb(docId) {
+            try {
+                const idb = await openProjectIdb();
+                return new Promise((resolve) => {
+                    const tx = idb.transaction('projects', 'readwrite');
+                    tx.objectStore('projects').delete(docId);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                });
+            } catch (e) {
+                return false;
+            }
+        }
+
+        async function refreshSavedProjectsDropdown() {
+            const idbRecords = await getAllProjectsFromIdb();
+            for (const rec of idbRecords) {
+                if (rec && rec.id && rec.state) {
+                    cachedProjectsMap[rec.id] = {
+                        ...(cachedProjectsMap[rec.id] || {}),
+                        id: rec.id,
+                        projectName: rec.state.projectName,
+                        updatedAt: rec.state.updatedAt,
+                        fullStateFromIdb: rec.state
+                    };
+                }
+            }
+
+            const list = Object.values(cachedProjectsMap);
+            list.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+
+            const selectEl = document.getElementById('saved-projects-select');
+            const prevSelected = selectEl.value;
+            selectEl.innerHTML = `<option value="">-- 保存済みデータ (${list.length}件) --</option>`;
+
+            list.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                const dateStr = item.updatedAt ? new Date(item.updatedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+                const scanCount = item.fullStateFromIdb?.batchSheets?.length ?? item.batchCount ?? 0;
+                const scanBadge = scanCount > 0 ? ` [答案${scanCount}枚]` : '';
+                opt.textContent = `${item.projectName}${scanBadge} (${dateStr})`;
+                selectEl.appendChild(opt);
+            });
+
+            if (prevSelected && cachedProjectsMap[prevSelected]) {
+                selectEl.value = prevSelected;
+            }
+        }
+
+        async function initCloudStorage() {
+            await refreshSavedProjectsDropdown();
+
+            if (typeof __firebase_config === 'undefined' || !__firebase_config) return;
+            try {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (tokenErr) {
+                        await signInAnonymously(auth);
+                    }
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    currentUser = user;
+                    if (user) {
+                        subscribeToSavedProjects();
+                    }
+                });
+            } catch (err) {
+                console.warn("Cloud storage init skipped:", err);
+            }
+        }
+
+        function subscribeToSavedProjects() {
+            if (!db || !currentUser) return;
+            const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'grading_projects');
+            onSnapshot(colRef, async (snapshot) => {
+                snapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const existing = cachedProjectsMap[docSnap.id] || {};
+                    cachedProjectsMap[docSnap.id] = {
+                        ...existing,
+                        ...data,
+                        id: docSnap.id
+                    };
+                });
+                await refreshSavedProjectsDropdown();
+            }, (err) => {
+                console.warn("Snapshot warning:", err);
+            });
+        }
+
+        document.getElementById('btn-save-cloud').addEventListener('click', async () => {
+            const fullState = window.buildCurrentProjectState(true);
+            const docId = 'proj_' + fullState.projectName.replace(/[^a-zA-Z0-9_\u3000-\u9fff]/g, '_').slice(0, 40);
+
+            await saveProjectToIdb(docId, fullState);
+
+            if (db && currentUser) {
+                try {
+                    const lightState = window.buildCurrentProjectState(false);
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'grading_projects', docId);
+                    await setDoc(docRef, {
+                        projectName: lightState.projectName,
+                        sheetTitle: lightState.sheetTitle,
+                        rawTestInput: lightState.rawTestInput,
+                        layoutMode: lightState.layoutMode,
+                        spacingMode: lightState.spacingMode,
+                        sectionsJson: JSON.stringify(lightState.sections),
+                        gradingResultsJson: lightState.gradingResults ? JSON.stringify(lightState.gradingResults) : "",
+                        recordedStudentsJson: JSON.stringify(lightState.recordedStudents || []),
+                        batchMetaJson: JSON.stringify(lightState.batchSheets || []),
+                        batchCount: (fullState.batchSheets || []).length,
+                        currentBatchIdx: fullState.currentBatchIdx,
+                        updatedAt: fullState.updatedAt
+                    });
+                } catch (cloudErr) {
+                    console.warn("Cloud sync warning:", cloudErr);
+                }
+            }
+
+            await refreshSavedProjectsDropdown();
+            document.getElementById('saved-projects-select').value = docId;
+            const scanCount = (fullState.batchSheets || []).length;
+            const scanMsg = scanCount > 0 ? `（読み込んだ答案 ${scanCount} 枚のデータを含む）` : '';
+            window.showMessage(`「${fullState.projectName}」${scanMsg}を保存しました！上のプルダウンからいつでも呼び出せます。`, 'success');
+        });
+
+        document.getElementById('btn-load-cloud').addEventListener('click', async () => {
+            const docId = document.getElementById('saved-projects-select').value;
+            if (!docId || !cachedProjectsMap[docId]) {
+                window.showMessage('読み込む保存データをプルダウンから選択してください。', 'error');
+                return;
+            }
+            const raw = cachedProjectsMap[docId];
+            try {
+                if (raw.fullStateFromIdb) {
+                    await window.restoreProjectState(raw.fullStateFromIdb);
+                    const scanCount = (raw.fullStateFromIdb.batchSheets || []).length;
+                    const extra = scanCount > 0 ? `（スキャン答案 ${scanCount} 枚も復元しました）` : '';
+                    window.showMessage(`「${raw.projectName}」の作業データを復元しました！${extra}`, 'success');
+                    return;
+                }
+
+                const stateData = {
+                    projectName: raw.projectName,
+                    sheetTitle: raw.sheetTitle,
+                    rawTestInput: raw.rawTestInput,
+                    layoutMode: raw.layoutMode,
+                    spacingMode: raw.spacingMode,
+                    sections: JSON.parse(raw.sectionsJson || '[]'),
+                    gradingResults: raw.gradingResultsJson ? JSON.parse(raw.gradingResultsJson) : null,
+                    recordedStudents: raw.recordedStudentsJson ? JSON.parse(raw.recordedStudentsJson) : [],
+                    batchSheets: raw.batchMetaJson ? JSON.parse(raw.batchMetaJson) : [],
+                    currentBatchIdx: raw.currentBatchIdx ?? 0
+                };
+                await window.restoreProjectState(stateData);
+                window.showMessage(`「${raw.projectName}」の作業データを復元しました！`, 'success');
+            } catch (err) {
+                console.error(err);
+                window.showMessage('保存データの復元に失敗しました。', 'error');
+            }
+        });
+
+        document.getElementById('btn-delete-cloud').addEventListener('click', async () => {
+            const docId = document.getElementById('saved-projects-select').value;
+            if (!docId || !cachedProjectsMap[docId]) {
+                window.showMessage('削除する保存データを選択してください。', 'error');
+                return;
+            }
+            const targetName = cachedProjectsMap[docId].projectName;
+            try {
+                await deleteProjectFromIdb(docId);
+                if (db && currentUser) {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'grading_projects', docId);
+                    await deleteDoc(docRef);
+                }
+                delete cachedProjectsMap[docId];
+                await refreshSavedProjectsDropdown();
+                window.showMessage(`「${targetName}」を削除しました。`, 'info');
+            } catch (err) {
+                console.error(err);
+                window.showMessage('削除に失敗しました。', 'error');
+            }
+        });
+
+        initCloudStorage();
+    </script>
+</body>
+</html>
